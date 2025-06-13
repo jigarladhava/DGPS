@@ -87,6 +87,78 @@
         .elevation-toggle input[type="checkbox"] {
             margin-right: 5px;
         }
+
+        .mobile-controls {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+        }
+
+        .control-button {
+            background: rgba(255, 255, 255, 0.95);
+            border: none;
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-size: 11px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.3s;
+        }
+
+        .control-button:hover {
+            background: rgba(255, 255, 255, 1);
+        }
+
+        .control-button.active {
+            background: rgba(0, 123, 255, 0.9);
+            color: white;
+        }
+
+        .measure-controls {
+            position: absolute;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+        }
+
+        .measure-button {
+            background: rgba(255, 255, 255, 0.95);
+            border: none;
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-size: 11px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.3s;
+        }
+
+        .measure-button:hover {
+            background: rgba(255, 255, 255, 1);
+        }
+
+        .measure-button.active {
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+        }
+
+        .distance-display {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -96,6 +168,27 @@
             <input type="checkbox" id="elevationToggle" checked>
             Show Elevation Labels
         </label>
+    </div>
+
+    <div class="measure-controls">
+        <button class="measure-button" id="measureToggle">
+            📏 Measure Distance
+        </button>
+        <button class="measure-button" id="clearMeasure">
+            🗑️ Clear
+        </button>
+        <div class="distance-display" id="distanceDisplay" style="display: none;">
+            Distance: <span id="distanceValue">0</span> m
+        </div>
+    </div>
+
+    <div class="mobile-controls">
+        <button class="control-button" id="layerToggle">
+            📍 Maps (Hidden)
+        </button>
+        <button class="control-button" id="legendToggle">
+            🎨 Legend (Hidden)
+        </button>
     </div>
 
     <!-- Leaflet JS -->
@@ -497,14 +590,18 @@ baseMaps["Google Satellite"].addTo(map);
 
             return div;
         };
-        legend.addTo(map);
+        // Don't add legend by default - will be added when user clicks toggle
 
         // Add layer control for switching between different map types
         const layerControl = L.control.layers(baseMaps, null, {
             position: 'topleft',
             collapsed: false
         });
-        layerControl.addTo(map);
+        // Don't add layer control by default - will be added when user clicks toggle
+
+        // Store references for mobile toggle functionality
+        let legendVisible = false;
+        let layerControlVisible = false;
 
         // Fit map to show all locations
         if (allBounds.length > 0) {
@@ -530,6 +627,155 @@ baseMaps["Google Satellite"].addTo(map);
                     markerData.marker.unbindTooltip();
                 }
             });
+        });
+
+        // Distance measurement functionality
+        let measureMode = false;
+        let measurePoints = [];
+        let measureLine = null;
+        let measureMarkers = [];
+
+        const measureToggleBtn = document.getElementById('measureToggle');
+        const clearMeasureBtn = document.getElementById('clearMeasure');
+        const distanceDisplay = document.getElementById('distanceDisplay');
+        const distanceValue = document.getElementById('distanceValue');
+
+        // Function to calculate distance between two points using Haversine formula
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Earth's radius in meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // Distance in meters
+        }
+
+        // Clear measurement
+        function clearMeasurement() {
+            measurePoints = [];
+            if (measureLine) {
+                map.removeLayer(measureLine);
+                measureLine = null;
+            }
+            measureMarkers.forEach(marker => map.removeLayer(marker));
+            measureMarkers = [];
+            distanceDisplay.style.display = 'none';
+        }
+
+        // Measure toggle button
+        measureToggleBtn.addEventListener('click', function() {
+            measureMode = !measureMode;
+            if (measureMode) {
+                this.classList.add('active');
+                this.innerHTML = '📏 Measuring...';
+                map.getContainer().style.cursor = 'crosshair';
+                clearMeasurement();
+            } else {
+                this.classList.remove('active');
+                this.innerHTML = '📏 Measure Distance';
+                map.getContainer().style.cursor = '';
+            }
+        });
+
+        // Clear button
+        clearMeasureBtn.addEventListener('click', function() {
+            clearMeasurement();
+            if (measureMode) {
+                measureToggleBtn.innerHTML = '📏 Measuring...';
+            }
+        });
+
+        // Map click handler for measurement
+        map.on('click', function(e) {
+            if (!measureMode) return;
+
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+
+            // Add marker
+            const marker = L.circleMarker([lat, lng], {
+                radius: 6,
+                color: '#dc3545',
+                fillColor: '#dc3545',
+                fillOpacity: 0.8,
+                weight: 2
+            }).addTo(map);
+
+            measureMarkers.push(marker);
+            measurePoints.push([lat, lng]);
+
+            if (measurePoints.length === 1) {
+                marker.bindTooltip('Start Point', {
+                    permanent: true,
+                    direction: 'top',
+                    className: 'elev-label'
+                });
+            } else if (measurePoints.length === 2) {
+                marker.bindTooltip('End Point', {
+                    permanent: true,
+                    direction: 'top',
+                    className: 'elev-label'
+                });
+
+                // Draw line between points
+                measureLine = L.polyline(measurePoints, {
+                    color: '#dc3545',
+                    weight: 3,
+                    opacity: 0.8,
+                    dashArray: '10, 10'
+                }).addTo(map);
+
+                // Calculate and display distance
+                const distance = calculateDistance(
+                    measurePoints[0][0], measurePoints[0][1],
+                    measurePoints[1][0], measurePoints[1][1]
+                );
+
+                distanceValue.textContent = distance.toFixed(2);
+                distanceDisplay.style.display = 'block';
+
+                // Reset for next measurement
+                measureMode = false;
+                measureToggleBtn.classList.remove('active');
+                measureToggleBtn.innerHTML = '📏 Measure Distance';
+                map.getContainer().style.cursor = '';
+            }
+        });
+
+        // Add mobile control toggle functionality
+        const layerToggleBtn = document.getElementById('layerToggle');
+        const legendToggleBtn = document.getElementById('legendToggle');
+
+        // Layer control toggle
+        layerToggleBtn.addEventListener('click', function() {
+            if (layerControlVisible) {
+                map.removeControl(layerControl);
+                this.classList.remove('active');
+                this.innerHTML = '📍 Maps (Hidden)';
+                layerControlVisible = false;
+            } else {
+                layerControl.addTo(map);
+                this.classList.add('active');
+                this.innerHTML = '📍 Maps';
+                layerControlVisible = true;
+            }
+        });
+
+        // Legend toggle
+        legendToggleBtn.addEventListener('click', function() {
+            if (legendVisible) {
+                map.removeControl(legend);
+                this.classList.remove('active');
+                this.innerHTML = '🎨 Legend (Hidden)';
+                legendVisible = false;
+            } else {
+                legend.addTo(map);
+                this.classList.add('active');
+                this.innerHTML = '🎨 Legend';
+                legendVisible = true;
+            }
         });
     </script>
 </body>
