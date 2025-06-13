@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DGPS Points Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        .elev-label {
+            font-size: 10px;
+            font-weight: bold;
+            background: rgba(255,255,255,0.9);
+            padding: 2px 4px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+
+        .location-label {
+            background: rgba(0, 0, 0, 0.8);
+            border: none;
+            border-radius: 3px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+
+        .legend {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 12px;
+            line-height: 18px;
+            color: #555;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+        }
+
+        .legend h4 {
+            margin: 0 0 5px;
+            color: #777;
+        }
+
+        .leaflet-control-layers {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 5px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            padding: 10px;
+            font-size: 13px;
+        }
+
+        .leaflet-control-layers-expanded {
+            min-width: 200px;
+        }
+
+        .leaflet-control-layers label {
+            font-weight: normal;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        .elevation-toggle {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .elevation-toggle:hover {
+            background: rgba(255, 255, 255, 1);
+        }
+
+        .elevation-toggle input[type="checkbox"] {
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="elevation-toggle">
+        <label>
+            <input type="checkbox" id="elevationToggle" checked>
+            Show Elevation Labels
+        </label>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.7.5/proj4.js"></script>
+
+    <script>
+        // Initialize map
+       const map = L.map('map', {
+    maxZoom: 27
+});
+
+// Define multiple map layers
+const baseMaps = {
+    // Google Maps
+    "Google Satellite": L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        maxZoom: 25,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: '&copy; Google Satellite'
+    }),
+    "Google Hybrid": L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+        maxZoom: 25,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: '&copy; Google Hybrid'
+    }),
+    "Google Streets": L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 25,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: '&copy; Google Streets'
+    }),
+    "Google Terrain": L.tileLayer('https://{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', {
+        maxZoom: 25,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        attribution: '&copy; Google Terrain'
+    }),
+
+    // Alternative Satellite Providers (Free)
+    "MT1 Satellite": L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        maxZoom: 20,
+        attribution: '&copy; Google Satellite (MT1)'
+    }),
+    
+    // OpenStreetMap
+    "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+    }),
+
+    // ESRI Maps (High Quality Satellite)
+    "ESRI Satellite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 27,
+        attribution: '&copy; ESRI World Imagery'
+    }),
+    "ESRI Streets": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: '&copy; ESRI Street Map'
+    }),
+    "ESRI Topographic": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: '&copy; ESRI Topographic'
+    }),
+
+    // Additional High-Quality Sources
+   /* "Wikimedia Maps": L.tileLayer('https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        attribution: '&copy; Wikimedia Maps'
+    }),*/
+    "OpenTopoMap": L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17,
+        subdomains: 'abc',
+        attribution: '&copy; OpenTopoMap'
+    }),
+    "CyclOSM": L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+        maxZoom: 20,
+        subdomains: 'abc',
+        attribution: '&copy; CyclOSM'
+    }),
+
+    // CartoDB
+    "CartoDB Positron": L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        attribution: '&copy; CartoDB Positron'
+    }),
+    "CartoDB Dark": L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        attribution: '&copy; CartoDB Dark Matter'
+    }),
+
+   
+};
+
+// Add default layer (Google Satellite)
+baseMaps["Google Satellite"].addTo(map);
+
+        // UTM to LatLng converter (UTM Zone 43N)
+        proj4.defs("EPSG:32643", "+proj=utm +zone=43 +datum=WGS84 +units=m +no_defs");
+        const utm43n = proj4("EPSG:32643");
+        const wgs84 = proj4("WGS84");
+
+        // Points grouped by location: [y=Northing, x=Easting]
+        const locationGroups = {
+            "Ajwa Sarovar": [
+                { name: "base_1", y: 2478751.89, x: 333247.089, elev: 101.808 },
+                { name: "Dami TBM", y: 2478754.274, x: 333253.132, elev: 100 },
+                { name: "TBM", y: 2478754.217, x: 333253.124, elev: 100.01 },
+                { name: "GL", y: 2478767.34, x: 333230.766, elev: 98.527 },
+                { name: "GL", y: 2478768.541, x: 333230.698, elev: 97.511 },
+                { name: "GL", y: 2478768.994, x: 333231.603, elev: 97.568 },
+                { name: "GL", y: 2478770.436, x: 333232.198, elev: 97.208 },
+                { name: "GL", y: 2478774.991, x: 333234.065, elev: 96.769 },
+                { name: "GL", y: 2478775.982, x: 333235.195, elev: 96.631 },
+                { name: "GL", y: 2478779.29, x: 333236.509, elev: 96.362 },
+                { name: "GL", y: 2478781.028, x: 333238.212, elev: 96.187 },
+                { name: "GL", y: 2478782.196, x: 333238.507, elev: 96.526 },
+                { name: "GL", y: 2478783.461, x: 333239.346, elev: 96.334 },
+                { name: "GL", y: 2478784.867, x: 333239.987, elev: 96.118 },
+                { name: "GL", y: 2478786.049, x: 333240.255, elev: 95.914 },
+                { name: "GL", y: 2478791.572, x: 333242.945, elev: 95.931 },
+                { name: "GL", y: 2478798.476, x: 333246.353, elev: 95.926 },
+                { name: "GL", y: 2478808.17, x: 333251.102, elev: 95.899 },
+                { name: "GL", y: 2478817.91, x: 333255.825, elev: 95.904 },
+                { name: "GL", y: 2478828.728, x: 333261.125, elev: 95.923 },
+                { name: "GL", y: 2478841.352, x: 333267.22, elev: 95.925 },
+                { name: "GL", y: 2478853.15, x: 333272.971, elev: 95.895 },
+                { name: "GL", y: 2478869.001, x: 333280.688, elev: 95.929 },
+                { name: "GL", y: 2478880.063, x: 333286.149, elev: 95.91 },
+                { name: "GL", y: 2478889.086, x: 333290.607, elev: 95.91 },
+                { name: "GL", y: 2478898.999, x: 333295.355, elev: 95.928 },
+                { name: "GL", y: 2478910.344, x: 333300.886, elev: 95.933 },
+                { name: "GL", y: 2478920.929, x: 333306.096, elev: 95.914 },
+                { name: "GL", y: 2478931.472, x: 333311.316, elev: 95.913 },
+                { name: "GL", y: 2478939.833, x: 333315.363, elev: 95.923 },
+                { name: "GL", y: 2478951.024, x: 333320.817, elev: 95.91 },
+                { name: "GL", y: 2478959.839, x: 333325.115, elev: 95.913 },
+                { name: "GL", y: 2478969.128, x: 333329.602, elev: 95.91 },
+                { name: "GL", y: 2478974.03, x: 333332.067, elev: 95.908 },
+                { name: "GL", y: 2478978.347, x: 333334.165, elev: 95.924 },
+                { name: "GL", y: 2478981.979, x: 333334.857, elev: 96.197 },
+                { name: "GL", y: 2478987.451, x: 333338.538, elev: 96.559 },
+                { name: "GL", y: 2478992.301, x: 333340.934, elev: 97.066 },
+                { name: "GL", y: 2478992.798, x: 333341.42, elev: 97.179 },
+                { name: "GL", y: 2478995.725, x: 333342.914, elev: 98.684 },
+                { name: "GL", y: 2478997.127, x: 333343.707, elev: 97.961 },
+                { name: "GL", y: 2479004.306, x: 333347.85, elev: 98.474 },
+                { name: "GL", y: 2478959.392, x: 333358.768, elev: 96.769 },
+                { name: "GL", y: 2478809.766, x: 333285.793, elev: 96.685 },
+                { name: "GL", y: 2478809.731, x: 333282.732, elev: 95.901 }
+            ],
+            "Aasoj Feeder": [
+                { name: "Aasoj base_1", y: 2485054.594, x: 335648.423, elev: 101.964 },
+                { name: "Aasoj TBM", y: 2485048.191, x: 335660.406, elev: 100.000 },
+                { name: "Aasoj TBM", y: 2485048.189, x: 335660.409, elev: 100.003 },
+                  { name: "Aasoj GL", y: 2485020.180, x: 335624.079, elev: 101.187 },
+                { name: "Aasoj GL", y: 2485011.297, x: 335624.962, elev: 100.367 },
+                 { name: "Aasoj GL", y: 2485009.452, x: 335628.581, elev: 98.722 },
+                { name: "Aasoj GL", y: 2485010.417, x: 335632.578, elev: 96.326 },
+                { name: "Aasoj GL", y: 2485009.699, x: 335636.065, elev: 93.902 },
+                { name: "Aasoj GL", y: 2485007.973, x: 335642.234, elev: 94.137 },
+                { name: "Aasoj GL", y: 2485006.251, x: 335646.958, elev: 94.269 },
+                { name: "Aasoj GL", y: 2485005.367, x: 335648.489, elev: 95.931 },
+                { name: "Aasoj GL", y: 2485005.114, x: 335649.270, elev: 96.495 },
+                { name: "Aasoj GL", y: 2485004.167, x: 335651.677, elev: 98.212 },
+        ],
+        "Vishwamitri Old Gate": [
+                { name: "Aasoj junadarwaja", y: 2485170.123, x: 335606.202, elev: 99.135 },
+                { name: "Aasoj junadarwajb", y: 2485170.204, x: 335606.328, elev: 99.139 },
+                { name: "Aasoj junadarwajc", y: 2485174.987, x: 335609.519, elev: 95.400 },
+                { name: "Aasoj GL", y: 2485175.290, x: 335609.768, elev: 93.601 },
+                { name: "Aasoj GL", y: 2485175.648, x: 335610.010, elev: 93.447 },
+                { name: "Aasoj GL", y: 2485175.240, x: 335609.684, elev: 95.408 },
+                { name: "Aasoj GL", y: 2485184.513, x: 335615.596, elev: 93.474 },
+                { name: "Aasoj GL", y: 2485190.927, x: 335619.397, elev: 93.652 },
+                { name: "Aasoj GL", y: 2485191.345, x: 335618.738, elev: 95.455 },
+                { name: "Aasoj GL", y: 2485194.719, x: 335621.014, elev: 97.805 },
+                { name: "Aasoj GL", y: 2485196.183, x: 335621.878, elev: 98.984 },
+        ],
+        "Vishwamitri Radial": [
+            { name: "Rod site pali top", y: 2485116.852, x: 335614.196, elev: 99.932 },
+            { name: "Viswamitri Radiyal gav Rod", y: 2485117.323, x: 335611.623, elev: 99.511 },
+              { name: "Viswamitri Radiyal gau", y: 2485117.061, x: 335577.132, elev: 95.678 },
+              { name: "Viswamitri Radiyal gat", y: 2485117.773, x: 335577.318, elev: 95.665 },
+              
+                { name: "viswamitri Radil gat", y: 2485129.385, x: 335575.814, elev: 95.987 },
+                { name: "viswamitri Radil gau", y: 2485129.552, x: 335574.202, elev: 92.270 },
+                { name: "viswamitri Radil gav", y: 2485125.014, x: 335574.446, elev: 92.077 },
+                { name: "vise", y: 2485123.540, x: 335574.337, elev: 91.652 },
+                { name: "Viswamitri", y: 2485118.487, x: 335569.359, elev: 91.902 },
+                { name: "Viswamitrj", y: 2485129.973, x: 335571.321, elev: 92.133 },
+              
+               
+                
+            ],
+            "Hansapura Waste Weir": [
+                { name: "Hansapura base_1", y: 2485806.531, x: 335451.036, elev: 101.578 },
+                { name: "Hansapura TBM", y: 2485810.441, x: 335447.992, elev: 100.000 },
+                { name: "Hansapura TBM", y: 2485810.433, x: 335447.992, elev: 99.996 },
+                { name: "Hansapura GL", y: 2485807.616, x: 335443.252, elev: 97.305 },
+                { name: "Hansapura GL", y: 2485807.730, x: 335443.797, elev: 97.411 },
+                { name: "Hansapura GL", y: 2485810.142, x: 335447.890, elev: 99.556 },
+                { name: "Hansapura GL", y: 2485789.813, x: 335458.847, elev: 99.848 },
+                { name: "Hansapura GL", y: 2485787.890, x: 335456.584, elev: 99.839 },
+                { name: "Hansapura GL", y: 2485788.286, x: 335456.178, elev: 93.333 },
+                { name: "Hansapura GL", y: 2485788.706, x: 335455.944, elev: 92.916 },
+                { name: "Hansapura GL", y: 2485790.715, x: 335458.509, elev: 93.408 },
+                { name: "Hansapura GL", y: 2485791.091, x: 335458.292, elev: 92.841 },
+                { name: "Hansapura GL", y: 2485797.390, x: 335454.600, elev: 92.466 },
+                { name: "Hansapura GL", y: 2485795.874, x: 335451.372, elev: 92.392 },
+                { name: "Hansapura GL", y: 2485805.074, x: 335450.683, elev: 92.444 },
+                { name: "Hansapura GL", y: 2485809.405, x: 335448.537, elev: 92.388 },
+                { name: "Hansapura GL", y: 2485806.821, x: 335444.474, elev: 92.462 }
+            ],
+            "Kodarwaya Bridge": [
+                { name: "Kodarwaya base_1", y: 2480158.466, x: 333423.214, elev: 100.935 },
+                { name: "Kodarwaya TBM", y: 2480157.193, x: 333421.148, elev: 100.000 },
+                { name: "Kodarwaya TBM", y: 2480157.205, x: 333421.143, elev: 100.000 },
+                { name: "Kodarwaya TBM", y: 2480158.466, x: 333423.214, elev: 99.346 },
+                { name: "Kodarwaya TBM", y: 2480160.240, x: 333423.134, elev: 98.980 },
+                { name: "Kodarwaya TBM", y: 2480160.409, x: 333425.139, elev: 98.827 },
+                { name: "Kodarwaya TBM", y: 2480160.503, x: 333426.944, elev: 97.833 },
+                { name: "Kodarwaya TBM", y: 2480160.070, x: 333434.569, elev: 93.427 },
+                { name: "Kodarwaya TBM", y: 2480160.058, x: 333435.445, elev: 92.032 },
+                { name: "Kodarwaya TBM", y: 2480160.423, x: 333441.576, elev: 91.678 },
+                { name: "Kodarwaya TBM", y: 2480160.265, x: 333446.307, elev: 91.692 },
+                { name: "Kodarwaya TBM", y: 2480159.856, x: 333449.281, elev: 91.861 },
+                { name: "Kodarwaya TBM", y: 2480159.875, x: 333449.336, elev: 93.536 },
+                { name: "Kodarwaya TBM", y: 2480160.510, x: 333453.439, elev: 95.482 },
+                { name: "Kodarwaya TBM", y: 2480160.183, x: 333456.675, elev: 97.614 },
+                { name: "Kodarwaya TBM", y: 2480158.946, x: 333458.773, elev: 98.758 },
+                { name: "Kodarwaya TBM", y: 2480159.966, x: 333461.394, elev: 99.100 },
+                { name: "Kodarwaya TBM", y: 2480160.485, x: 333463.659, elev: 99.951 }
+            ],
+            "Mundhela Waste Weir": [
+                { name: "Mundhela base_1", y: 2487772.729, x: 334033.631, elev: 101.789 },
+                { name: "Mundhela TBM", y: 2487766.162, x: 334042.016, elev: 100.000 },
+                { name: "Mundhela TBM", y: 2487766.332, x: 334042.106, elev: 100.028 },
+                { name: "Mundhela TGL", y: 2487768.296, x: 334037.382, elev: 100.017 },
+                { name: "Mundhela GL", y: 2487771.078, x: 334031.571, elev: 99.994 },
+                { name: "Mundhela GL", y: 2487774.070, x: 334025.425, elev: 100.044 },
+                { name: "Mundhela GL", y: 2487778.214, x: 334016.992, elev: 100.042 },
+                { name: "Mundhela GL", y: 2487781.819, x: 334009.407, elev: 100.053 },
+                { name: "Mundhela GL", y: 2487785.509, x: 334001.825, elev: 100.069 },
+                { name: "Mundhela GL", y: 2487789.741, x: 333993.133, elev: 100.025 },
+                { name: "Mundhela GL", y: 2487795.032, x: 333982.404, elev: 100.012 },
+                { name: "Mundhela GL", y: 2487800.725, x: 333970.193, elev: 99.998 },
+                { name: "Mundhela GL", y: 2487806.403, x: 333958.605, elev: 100.078 },
+                { name: "Mundhela GL", y: 2487812.419, x: 333946.452, elev: 100.075 },
+                { name: "Mundhela GL", y: 2487816.303, x: 333938.357, elev: 100.084 },
+                { name: "Mundhela GL", y: 2487818.883, x: 333932.773, elev: 100.014 },
+                { name: "Mundhela GL", y: 2487819.150, x: 333932.891, elev: 103.219 },
+                { name: "Mundhela GL", y: 2487819.713, x: 333931.995, elev: 103.226 },
+                { name: "Mundhela GL", y: 2487806.378, x: 333926.015, elev: 100.516 },
+                { name: "Mundhela GL", y: 2487808.970, x: 333927.139, elev: 100.538 },
+                { name: "Mundhela GL", y: 2487766.042, x: 334042.576, elev: 103.234 },
+                { name: "Mundhela GL", y: 2487765.521, x: 334043.689, elev: 103.242 }
+            ],
+            "Unjeti Gate": [
+                { name: "Unjeti base_1", y: 2482024.595, x: 335423.181, elev: 101.437 },
+                { name: "Unjeti TBM", y: 2482018.536, x: 335424.426, elev: 100.000 },
+                { name: "Unjeti TBM", y: 2482018.524, x: 335424.428, elev: 100.001 },
+                { name: "Unjeti TBM", y: 2482023.116, x: 335408.594, elev: 97.263 },
+                { name: "Unjeti TBM", y: 2482043.590, x: 335389.803, elev: 93.285 },
+                { name: "Unjeti TBM", y: 2482046.116, x: 335392.339, elev: 93.096 },
+                { name: "Unjeti TBM", y: 2482047.701, x: 335393.710, elev: 93.133 },
+                { name: "Unjeti TBM", y: 2482049.445, x: 335395.813, elev: 93.108 },
+                { name: "Unjeti TBM", y: 2482050.469, x: 335396.924, elev: 93.303 },
+                { name: "Unjeti TBM", y: 2482051.961, x: 335395.356, elev: 93.340 },
+                { name: "Unjeti TBM", y: 2482050.288, x: 335393.467, elev: 93.357 },
+                { name: "Unjeti TBM", y: 2482048.785, x: 335391.741, elev: 93.362 },
+                { name: "Unjeti TBM", y: 2482048.536, x: 335391.613, elev: 93.414 },
+                { name: "Unjeti TBM", y: 2482047.059, x: 335389.997, elev: 93.418 },
+                { name: "Unjeti TBM", y: 2482045.436, x: 335388.164, elev: 93.345 },
+                { name: "Unjeti TBM", y: 2482045.290, x: 335388.129, elev: 97.245 },
+                { name: "Unjeti TBM", y: 2482044.838, x: 335387.634, elev: 97.242 },
+                { name: "Unjeti TBM", y: 2482052.127, x: 335395.668, elev: 97.283 },
+                { name: "Unjeti TBM", y: 2482050.042, x: 335398.365, elev: 97.276 },
+               
+            ],
+            "Zoriya Gate": [
+                { name: "Zoriya base_1", y: 2483623.133, x: 335464.221, elev: 101.318 },
+                { name: "Zoriya TBM", y: 2483623.492, x: 335462.753, elev: 100.000 },
+                { name: "Zoriya TBM", y: 2483623.493, x: 335462.751, elev: 100.002 },
+                { name: "Zoriya TBM", y: 2483606.174, x: 335493.003, elev: 96.606 },
+                { name: "Zoriya RL", y: 2483606.172, x: 335493.003, elev: 96.614 },
+                { name: "Zoriya GL", y: 2483606.130, x: 335493.019, elev: 96.605 },
+                { name: "Zoriya GL", y: 2483605.777, x: 335500.980, elev: 95.346 },
+                { name: "Zoriya GL", y: 2483607.394, x: 335502.424, elev: 94.464 },
+                { name: "Zoriya GL", y: 2483609.434, x: 335504.056, elev: 93.236 },
+                { name: "Zoriya GL", y: 2483611.146, x: 335505.652, elev: 92.344 },
+                { name: "Zoriya GL", y: 2483613.244, x: 335507.598, elev: 91.783 },
+                { name: "Zoriya GL", y: 2483615.295, x: 335509.331, elev: 91.212 },
+                { name: "Zoriya GL", y: 2483615.802, x: 335509.598, elev: 90.990 },
+                { name: "Zoriya GL", y: 2483616.896, x: 335510.738, elev: 91.227 },
+                { name: "Zoriya GL", y: 2483617.187, x: 335511.193, elev: 91.795 },
+                { name: "Zoriya GL", y: 2483619.475, x: 335513.513, elev: 92.245 },
+                { name: "Zoriya GL", y: 2483621.023, x: 335514.912, elev: 93.302 },
+                { name: "Zoriya GL", y: 2483623.000, x: 335516.291, elev: 94.770 },
+                { name: "Zoriya GL", y: 2483623.534, x: 335516.927, elev: 95.002 }
+            ]
+        };
+
+        // Define colors for each location
+        const locationColors = {
+            "Ajwa Sarovar": "#FF0000",           // Red
+            "Aasoj Feeder": "#00FF00",       // Green
+            "Vishwamitri Old Gate" : "#FFA500", // Orange
+            "Vishwamitri Radial" : "#0000FF",   // Blue
+            "Hansapura Waste Weir": "#800080", // Purple
+            "Kodarwaya Bridge": "#FF8000",   // Orange
+            "Mundhela Waste Weir": "#800080", // Purple
+            "Unjeti Gate": "#008080",        // Teal
+            "Zoriya Gate": "#FF1493"         // Deep Pink
+        };
+
+        const allBounds = [];
+        const allMarkers = []; // Store all markers for elevation toggle
+
+        // Process each location group separately
+        Object.keys(locationGroups).forEach(locationName => {
+            const points = locationGroups[locationName];
+            const color = locationColors[locationName];
+            const latlngs = [];
+
+            // Convert points and create markers for this location
+            points.forEach(p => {
+                const [lon, lat] = proj4(utm43n, wgs84, [p.x, p.y]);
+
+                // Create marker with location-specific color
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 4,
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.9,
+                    weight: 1
+                }).addTo(map);
+
+                // Add permanent elevation label
+                const elevationTooltip = marker.bindTooltip(`${p.elev} m`, {
+                    permanent: true,
+                    direction: 'top',
+                    className: 'elev-label',
+                    offset: [0, -6]
+                });
+
+                // Store marker reference for elevation toggle
+                allMarkers.push({
+                    marker: marker,
+                    elevation: p.elev,
+                    tooltip: elevationTooltip
+                });
+
+                // Add detailed popup with location info
+                marker.bindPopup(`
+                    <strong>${locationName.replace(/_/g, ' ')}</strong><br/>
+                    <strong>Point:</strong> ${p.name}<br/>
+                    <strong>Elevation:</strong> ${p.elev} m<br/>
+                    <strong>Coordinates:</strong><br/>
+                    Northing: ${p.y.toFixed(3)} m<br/>
+                    Easting: ${p.x.toFixed(3)} m<br/>
+                    Lat/Lon: ${lat.toFixed(6)}°, ${lon.toFixed(6)}°
+                `);
+
+                latlngs.push([lat, lon]);
+                allBounds.push([lat, lon]);
+            });
+
+            // Draw polyline connecting points within this location only
+            if (latlngs.length > 1) {
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: 3,
+                    opacity: 0.8
+                }).addTo(map);
+
+                // Add location label
+                polyline.bindTooltip(locationName.replace(/_/g, ' '), {
+                    permanent: true,
+                    direction: 'center',
+                    className: 'location-label',
+                    offset: [0, 0]
+                });
+            }
+        });
+
+        // Create legend
+        const legend = L.control({position: 'topright'});
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'info legend');
+            div.innerHTML = '<h4>Survey Locations</h4>';
+
+            Object.keys(locationColors).forEach(location => {
+                const color = locationColors[location];
+                const displayName = location.replace(/_/g, ' ');
+                div.innerHTML +=
+                    '<i style="background:' + color + '; width: 18px; height: 18px; display: inline-block; margin-right: 8px;"></i> ' +
+                    displayName + '<br>';
+            });
+
+            return div;
+        };
+        legend.addTo(map);
+
+        // Add layer control for switching between different map types
+        const layerControl = L.control.layers(baseMaps, null, {
+            position: 'topleft',
+            collapsed: false
+        });
+        layerControl.addTo(map);
+
+        // Fit map to show all locations
+        if (allBounds.length > 0) {
+            map.fitBounds(allBounds);
+        }
+
+        // Add elevation toggle functionality
+        const elevationToggle = document.getElementById('elevationToggle');
+        elevationToggle.addEventListener('change', function() {
+            const showElevation = this.checked;
+
+            allMarkers.forEach(markerData => {
+                if (showElevation) {
+                    // Show elevation tooltip
+                    markerData.marker.bindTooltip(`${markerData.elevation} m`, {
+                        permanent: true,
+                        direction: 'top',
+                        className: 'elev-label',
+                        offset: [0, -6]
+                    });
+                } else {
+                    // Hide elevation tooltip
+                    markerData.marker.unbindTooltip();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
