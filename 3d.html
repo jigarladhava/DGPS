@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D DGPS Survey Visualization</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .left-panel {
+            width: 300px;
+            background: white;
+            border-right: 2px solid #ddd;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .map-container {
+            height: 40%;
+            position: relative;
+        }
+        
+        .viewer-3d {
+            height: 60%;
+            background: #000;
+            position: relative;
+        }
+        
+        .location-item {
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .location-item:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .location-item.active {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .location-color {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+            margin-right: 10px;
+            border-radius: 3px;
+            vertical-align: middle;
+        }
+        
+        .location-info {
+            display: inline-block;
+            vertical-align: middle;
+        }
+        
+        .location-name {
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .location-stats {
+            font-size: 12px;
+            color: #666;
+            margin-top: 2px;
+        }
+        
+        .controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .control-group {
+            margin-bottom: 10px;
+        }
+        
+        .control-group label {
+            display: block;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        
+        .control-group input, .control-group select {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        
+        .viewer-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <h3>Survey Locations</h3>
+            <div id="locationList"></div>
+        </div>
+        
+        <div class="main-content">
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+            
+            <div class="viewer-3d">
+                <div class="loading" id="loading">Select a location to view 3D terrain</div>
+                <div class="controls">
+                    <div class="control-group">
+                        <label>Elevation Scale:</label>
+                        <input type="range" id="elevationScale" min="1" max="10" value="3" step="0.5">
+                        <span id="scaleValue">3x</span>
+                    </div>
+                    <div class="control-group">
+                        <label>View Mode:</label>
+                        <select id="viewMode">
+                            <option value="terrain">Terrain</option>
+                            <option value="wireframe">Wireframe</option>
+                            <option value="points">Points</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Show Labels:</label>
+                        <input type="checkbox" id="showLabels" checked>
+                    </div>
+                </div>
+                
+                <div class="viewer-info" id="viewerInfo">
+                    <div><strong>Location:</strong> <span id="currentLocation">None</span></div>
+                    <div><strong>Points:</strong> <span id="pointCount">0</span></div>
+                    <div><strong>Elevation Range:</strong> <span id="elevationRange">-</span></div>
+                    <div><strong>Area:</strong> <span id="areaSize">-</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // UTM to LatLng converter (UTM Zone 43N)
+        proj4.defs("EPSG:32643", "+proj=utm +zone=43 +datum=WGS84 +units=m +no_defs");
+        const utm43n = proj4("EPSG:32643");
+        const wgs84 = proj4("WGS84");
+
+        // Location data from layout.html
+        const locationGroups = {
+            "Ajwa_Sarovar": [
+                // Start from base station and TBM points
+                { name: "base_1", y: 2478751.89, x: 333247.089, elev: 101.808 },
+                { name: "TBM", y: 2478754.217, x: 333253.124, elev: 100.01 },
+                { name: "Dami TBM", y: 2478754.274, x: 333253.132, elev: 100 },
+
+                // Follow the survey line from north to south, west to east
+                { name: "GL", y: 2478767.34, x: 333230.766, elev: 98.527 },
+                { name: "GL", y: 2478768.541, x: 333230.698, elev: 97.511 },
+                { name: "GL", y: 2478768.994, x: 333231.603, elev: 97.568 },
+                { name: "GL", y: 2478770.436, x: 333232.198, elev: 97.208 },
+                { name: "GL", y: 2478774.991, x: 333234.065, elev: 96.769 },
+                { name: "GL", y: 2478775.982, x: 333235.195, elev: 96.631 },
+                { name: "GL", y: 2478779.29, x: 333236.509, elev: 96.362 },
+                { name: "GL", y: 2478781.028, x: 333238.212, elev: 96.187 },
+                { name: "GL", y: 2478782.196, x: 333238.507, elev: 96.526 },
+                { name: "GL", y: 2478783.461, x: 333239.346, elev: 96.334 },
+                { name: "GL", y: 2478784.867, x: 333239.987, elev: 96.118 },
+                { name: "GL", y: 2478786.049, x: 333240.255, elev: 95.914 },
+                { name: "GL", y: 2478791.572, x: 333242.945, elev: 95.931 },
+                { name: "GL", y: 2478798.476, x: 333246.353, elev: 95.926 },
+                { name: "GL", y: 2478808.17, x: 333251.102, elev: 95.899 },
+                { name: "GL", y: 2478809.731, x: 333282.732, elev: 95.901 },
+                { name: "GL", y: 2478809.766, x: 333285.793, elev: 96.685 },
+                { name: "GL", y: 2478817.91, x: 333255.825, elev: 95.904 },
+                { name: "GL", y: 2478828.728, x: 333261.125, elev: 95.923 },
+                { name: "GL", y: 2478841.352, x: 333267.22, elev: 95.925 },
+                { name: "GL", y: 2478853.15, x: 333272.971, elev: 95.895 },
+                { name: "GL", y: 2478869.001, x: 333280.688, elev: 95.929 },
+                { name: "GL", y: 2478880.063, x: 333286.149, elev: 95.91 },
+                { name: "GL", y: 2478889.086, x: 333290.607, elev: 95.91 },
+                { name: "GL", y: 2478898.999, x: 333295.355, elev: 95.928 },
+                { name: "GL", y: 2478910.344, x: 333300.886, elev: 95.933 },
+                { name: "GL", y: 2478920.929, x: 333306.096, elev: 95.914 },
+                { name: "GL", y: 2478931.472, x: 333311.316, elev: 95.913 },
+                { name: "GL", y: 2478939.833, x: 333315.363, elev: 95.923 },
+                { name: "GL", y: 2478951.024, x: 333320.817, elev: 95.91 },
+                { name: "GL", y: 2478959.392, x: 333358.768, elev: 96.769 },
+                { name: "GL", y: 2478959.839, x: 333325.115, elev: 95.913 },
+                { name: "GL", y: 2478969.128, x: 333329.602, elev: 95.91 },
+                { name: "GL", y: 2478974.03, x: 333332.067, elev: 95.908 },
+                { name: "GL", y: 2478978.347, x: 333334.165, elev: 95.924 },
+                { name: "GL", y: 2478981.979, x: 333334.857, elev: 96.197 },
+                { name: "GL", y: 2478987.451, x: 333338.538, elev: 96.559 },
+                { name: "GL", y: 2478992.301, x: 333340.934, elev: 97.066 },
+                { name: "GL", y: 2478992.798, x: 333341.42, elev: 97.179 },
+                { name: "GL", y: 2478995.725, x: 333342.914, elev: 98.684 },
+                { name: "GL", y: 2478997.127, x: 333343.707, elev: 97.961 },
+                { name: "GL", y: 2479004.306, x: 333347.85, elev: 98.474 }
+            ],
+            "Aasoj_Feeder": [
+                // Start from base station and TBM
+                { name: "Aasoj base_1", y: 2485054.594, x: 335648.423, elev: 101.964 },
+                { name: "Aasoj TBM", y: 2485048.189, x: 335660.409, elev: 100.003 },
+                { name: "Aasoj TBM", y: 2485048.191, x: 335660.406, elev: 100.000 },
+
+                // Follow feeder line from upstream to downstream (north to south, west to east)
+                { name: "Aasoj GL", y: 2485020.180, x: 335624.079, elev: 101.187 },
+                { name: "Aasoj GL", y: 2485011.297, x: 335624.962, elev: 100.367 },
+                { name: "Aasoj GL", y: 2485009.452, x: 335628.581, elev: 98.722 },
+                { name: "Aasoj GL", y: 2485010.417, x: 335632.578, elev: 96.326 },
+                { name: "Aasoj GL", y: 2485009.699, x: 335636.065, elev: 93.902 },
+                { name: "Aasoj GL", y: 2485007.973, x: 335642.234, elev: 94.137 },
+                { name: "Aasoj GL", y: 2485006.251, x: 335646.958, elev: 94.269 },
+                { name: "Aasoj GL", y: 2485005.367, x: 335648.489, elev: 95.931 },
+                { name: "Aasoj GL", y: 2485005.114, x: 335649.270, elev: 96.495 },
+                { name: "Aasoj GL", y: 2485004.167, x: 335651.677, elev: 98.212 }
+            ],
+            "Vishwamitri_Old_Gate": [
+                // Start from gate structure points (junadarwaja = old gate)
+                { name: "Aasoj junadarwaja", y: 2485170.123, x: 335606.202, elev: 99.135 },
+                { name: "Aasoj junadarwajb", y: 2485170.204, x: 335606.328, elev: 99.139 },
+                { name: "Aasoj junadarwajc", y: 2485174.987, x: 335609.519, elev: 95.400 },
+
+                // Follow gate area survey from west to east, north to south
+                { name: "Aasoj GL", y: 2485175.648, x: 335610.010, elev: 93.447 },
+                { name: "Aasoj GL", y: 2485175.240, x: 335609.684, elev: 95.408 },
+                { name: "Aasoj GL", y: 2485175.290, x: 335609.768, elev: 93.601 },
+                { name: "Aasoj GL", y: 2485184.513, x: 335615.596, elev: 93.474 },
+                { name: "Aasoj GL", y: 2485191.345, x: 335618.738, elev: 95.455 },
+                { name: "Aasoj GL", y: 2485190.927, x: 335619.397, elev: 93.652 },
+                { name: "Aasoj GL", y: 2485194.719, x: 335621.014, elev: 97.805 },
+                { name: "Aasoj GL", y: 2485196.183, x: 335621.878, elev: 98.984 }
+            ],
+            "Vishwamitri_Radial": [
+                // Start from main radial distribution points (west to east)
+                { name: "Viswamitri", y: 2485118.487, x: 335569.359, elev: 91.902 },
+                { name: "Viswamitrj", y: 2485129.973, x: 335571.321, elev: 92.133 },
+                { name: "viswamitri Radil gau", y: 2485129.552, x: 335574.202, elev: 92.270 },
+                { name: "vise", y: 2485123.540, x: 335574.337, elev: 91.652 },
+                { name: "viswamitri Radil gav", y: 2485125.014, x: 335574.446, elev: 92.077 },
+                { name: "viswamitri Radil gat", y: 2485129.385, x: 335575.814, elev: 95.987 },
+                { name: "Viswamitri Radiyal gau", y: 2485117.061, x: 335577.132, elev: 95.678 },
+                { name: "Viswamitri Radiyal gat", y: 2485117.773, x: 335577.318, elev: 95.665 },
+                { name: "Viswamitri Radiyal gav Rod", y: 2485117.323, x: 335611.623, elev: 99.511 },
+                { name: "Rod site pali top", y: 2485116.852, x: 335614.196, elev: 99.932 }
+            ],
+            "Hansapura_Waste_Weir": [
+                { name: "Hansapura base_1", y: 2485806.531, x: 335451.036, elev: 101.578 },
+                { name: "Hansapura TBM", y: 2485810.441, x: 335447.992, elev: 100.000 },
+                { name: "Hansapura TBM", y: 2485810.433, x: 335447.992, elev: 99.996 },
+                { name: "Hansapura GL", y: 2485807.616, x: 335443.252, elev: 97.305 },
+                { name: "Hansapura GL", y: 2485807.730, x: 335443.797, elev: 97.411 },
+                { name: "Hansapura GL", y: 2485810.142, x: 335447.890, elev: 99.556 },
+                { name: "Hansapura GL", y: 2485789.813, x: 335458.847, elev: 99.848 },
+                { name: "Hansapura GL", y: 2485787.890, x: 335456.584, elev: 99.839 },
+                { name: "Hansapura GL", y: 2485788.286, x: 335456.178, elev: 93.333 },
+                { name: "Hansapura GL", y: 2485788.706, x: 335455.944, elev: 92.916 },
+                { name: "Hansapura GL", y: 2485790.715, x: 335458.509, elev: 93.408 },
+                { name: "Hansapura GL", y: 2485791.091, x: 335458.292, elev: 92.841 },
+                { name: "Hansapura GL", y: 2485797.390, x: 335454.600, elev: 92.466 },
+                { name: "Hansapura GL", y: 2485795.874, x: 335451.372, elev: 92.392 },
+                { name: "Hansapura GL", y: 2485805.074, x: 335450.683, elev: 92.444 },
+                { name: "Hansapura GL", y: 2485809.405, x: 335448.537, elev: 92.388 },
+                { name: "Hansapura GL", y: 2485806.821, x: 335444.474, elev: 92.462 }
+            ],
+            "Kodarwaya_Bridge": [
+                // Start from base station and reference points
+                { name: "Kodarwaya base_1", y: 2480158.466, x: 333423.214, elev: 100.935 },
+                { name: "Kodarwaya TBM", y: 2480157.205, x: 333421.143, elev: 100.000 },
+                { name: "Kodarwaya TBM", y: 2480157.193, x: 333421.148, elev: 100.000 },
+                { name: "Kodarwaya TBM", y: 2480158.466, x: 333423.214, elev: 99.346 },
+
+                // Follow bridge cross-section from west to east
+                { name: "Kodarwaya TBM", y: 2480160.240, x: 333423.134, elev: 98.980 },
+                { name: "Kodarwaya TBM", y: 2480160.409, x: 333425.139, elev: 98.827 },
+                { name: "Kodarwaya TBM", y: 2480160.503, x: 333426.944, elev: 97.833 },
+                { name: "Kodarwaya TBM", y: 2480160.070, x: 333434.569, elev: 93.427 },
+                { name: "Kodarwaya TBM", y: 2480160.058, x: 333435.445, elev: 92.032 },
+                { name: "Kodarwaya TBM", y: 2480160.423, x: 333441.576, elev: 91.678 },
+                { name: "Kodarwaya TBM", y: 2480160.265, x: 333446.307, elev: 91.692 },
+                { name: "Kodarwaya TBM", y: 2480159.856, x: 333449.281, elev: 91.861 },
+                { name: "Kodarwaya TBM", y: 2480159.875, x: 333449.336, elev: 93.536 },
+                { name: "Kodarwaya TBM", y: 2480160.510, x: 333453.439, elev: 95.482 },
+                { name: "Kodarwaya TBM", y: 2480160.183, x: 333456.675, elev: 97.614 },
+                { name: "Kodarwaya TBM", y: 2480158.946, x: 333458.773, elev: 98.758 },
+                { name: "Kodarwaya TBM", y: 2480159.966, x: 333461.394, elev: 99.100 },
+                { name: "Kodarwaya TBM", y: 2480160.485, x: 333463.659, elev: 99.951 }
+            ],
+            "Mundhela_Waste_Weir": [
+                { name: "Mundhela base_1", y: 2487772.729, x: 334033.631, elev: 101.789 },
+                { name: "Mundhela TBM", y: 2487766.162, x: 334042.016, elev: 100.000 },
+                { name: "Mundhela TBM", y: 2487766.332, x: 334042.106, elev: 100.028 },
+                { name: "Mundhela TGL", y: 2487768.296, x: 334037.382, elev: 100.017 },
+                { name: "Mundhela GL", y: 2487771.078, x: 334031.571, elev: 99.994 },
+                { name: "Mundhela GL", y: 2487774.070, x: 334025.425, elev: 100.044 },
+                { name: "Mundhela GL", y: 2487778.214, x: 334016.992, elev: 100.042 },
+                { name: "Mundhela GL", y: 2487781.819, x: 334009.407, elev: 100.053 },
+                { name: "Mundhela GL", y: 2487785.509, x: 334001.825, elev: 100.069 },
+                { name: "Mundhela GL", y: 2487789.741, x: 333993.133, elev: 100.025 },
+                { name: "Mundhela GL", y: 2487795.032, x: 333982.404, elev: 100.012 },
+                { name: "Mundhela GL", y: 2487800.725, x: 333970.193, elev: 99.998 },
+                { name: "Mundhela GL", y: 2487806.403, x: 333958.605, elev: 100.078 },
+                { name: "Mundhela GL", y: 2487812.419, x: 333946.452, elev: 100.075 },
+                { name: "Mundhela GL", y: 2487816.303, x: 333938.357, elev: 100.084 },
+                { name: "Mundhela GL", y: 2487818.883, x: 333932.773, elev: 100.014 },
+                { name: "Mundhela GL", y: 2487819.150, x: 333932.891, elev: 103.219 },
+                { name: "Mundhela GL", y: 2487819.713, x: 333931.995, elev: 103.226 },
+                { name: "Mundhela GL", y: 2487806.378, x: 333926.015, elev: 100.516 },
+                { name: "Mundhela GL", y: 2487808.970, x: 333927.139, elev: 100.538 },
+                { name: "Mundhela GL", y: 2487766.042, x: 334042.576, elev: 103.234 },
+                { name: "Mundhela GL", y: 2487765.521, x: 334043.689, elev: 103.242 }
+            ],
+            "Unjeti_Gate": [
+                { name: "Unjeti base_1", y: 2482024.595, x: 335423.181, elev: 101.437 },
+                { name: "Unjeti TBM", y: 2482018.536, x: 335424.426, elev: 100.000 },
+                { name: "Unjeti TBM", y: 2482018.524, x: 335424.428, elev: 100.001 },
+                { name: "Unjeti TBM", y: 2482043.590, x: 335389.803, elev: 93.285 },
+                { name: "Unjeti TBM", y: 2482046.116, x: 335392.339, elev: 93.096 },
+                { name: "Unjeti TBM", y: 2482047.701, x: 335393.710, elev: 93.133 },
+                { name: "Unjeti TBM", y: 2482049.445, x: 335395.813, elev: 93.108 },
+                { name: "Unjeti TBM", y: 2482050.469, x: 335396.924, elev: 93.303 },
+                { name: "Unjeti TBM", y: 2482051.961, x: 335395.356, elev: 93.340 },
+                { name: "Unjeti TBM", y: 2482050.288, x: 335393.467, elev: 93.357 },
+                { name: "Unjeti TBM", y: 2482048.785, x: 335391.741, elev: 93.362 },
+                { name: "Unjeti TBM", y: 2482048.536, x: 335391.613, elev: 93.414 },
+                { name: "Unjeti TBM", y: 2482047.059, x: 335389.997, elev: 93.418 },
+                { name: "Unjeti TBM", y: 2482045.436, x: 335388.164, elev: 93.345 },
+                { name: "Unjeti TBM", y: 2482045.290, x: 335388.129, elev: 97.245 },
+                { name: "Unjeti TBM", y: 2482044.838, x: 335387.634, elev: 97.242 },
+                { name: "Unjeti TBM", y: 2482052.127, x: 335395.668, elev: 97.283 },
+                { name: "Unjeti TBM", y: 2482050.042, x: 335398.365, elev: 97.276 },
+                { name: "Unjeti TBM", y: 2482023.116, x: 335408.594, elev: 97.263 }
+            ],
+            "Zoriya_Gate": [
+                { name: "Zoriya base_1", y: 2483623.133, x: 335464.221, elev: 101.318 },
+                { name: "Zoriya TBM", y: 2483623.492, x: 335462.753, elev: 100.000 },
+                { name: "Zoriya TBM", y: 2483623.493, x: 335462.751, elev: 100.002 },
+                { name: "Zoriya TBM", y: 2483606.174, x: 335493.003, elev: 96.606 },
+                { name: "Zoriya RL", y: 2483606.172, x: 335493.003, elev: 96.614 },
+                { name: "Zoriya GL", y: 2483606.130, x: 335493.019, elev: 96.605 },
+                { name: "Zoriya GL", y: 2483605.777, x: 335500.980, elev: 95.346 },
+                { name: "Zoriya GL", y: 2483607.394, x: 335502.424, elev: 94.464 },
+                { name: "Zoriya GL", y: 2483609.434, x: 335504.056, elev: 93.236 },
+                { name: "Zoriya GL", y: 2483611.146, x: 335505.652, elev: 92.344 },
+                { name: "Zoriya GL", y: 2483613.244, x: 335507.598, elev: 91.783 },
+                { name: "Zoriya GL", y: 2483615.295, x: 335509.331, elev: 91.212 },
+                { name: "Zoriya GL", y: 2483615.802, x: 335509.598, elev: 90.990 },
+                { name: "Zoriya GL", y: 2483616.896, x: 335510.738, elev: 91.227 },
+                { name: "Zoriya GL", y: 2483617.187, x: 335511.193, elev: 91.795 },
+                { name: "Zoriya GL", y: 2483619.475, x: 335513.513, elev: 92.245 },
+                { name: "Zoriya GL", y: 2483621.023, x: 335514.912, elev: 93.302 },
+                { name: "Zoriya GL", y: 2483623.000, x: 335516.291, elev: 94.770 },
+                { name: "Zoriya GL", y: 2483623.534, x: 335516.927, elev: 95.002 }
+            ],
+            "Narahari_Bridge": [
+                { name: "Narahari base_1", y: 2469141.490, x: 313575.913, elev: 101.578 },
+                { name: "Narahari TBM", y: 2469142.203, x: 313576.488, elev: 100.002 },
+                { name: "Narahari TBM", y: 2469142.194, x: 313576.477, elev: 100.000 },
+                { name: "Narahari TBM", y: 2469142.194, x: 313576.479, elev: 100.002 },
+                { name: "Narahari Brigade cornar", y: 2469150.687, x: 313552.476, elev: 99.582 },
+                { name: "Narahari GL", y: 2469151.363, x: 313553.580, elev: 99.157 },
+                { name: "Narahari GL", y: 2469152.654, x: 313552.916, elev: 99.506 },
+                { name: "Narahari GL", y: 2469152.085, x: 313554.615, elev: 95.593 },
+                { name: "Narahari GL", y: 2469151.046, x: 313559.266, elev: 95.145 },
+                { name: "Narahari GL", y: 2469148.865, x: 313565.878, elev: 94.388 },
+                { name: "Narahari GL", y: 2469147.468, x: 313569.651, elev: 91.606 },
+                { name: "Narahari WATAR top", y: 2469143.862, x: 313572.158, elev: 89.879 },
+                { name: "Narahari WATAR top", y: 2469145.245, x: 313573.239, elev: 90.007 },
+                { name: "Narahari Brigade secaod cornar", y: 2469150.756, x: 313553.642, elev: 95.473 },
+                { name: "Narahari Brigade top", y: 2469149.525, x: 313554.593, elev: 99.490 },
+                { name: "Narahari Brigade top", y: 2469145.718, x: 313566.026, elev: 100.012 },
+                { name: "Narahari sreet light poll 1", y: 2469145.747, x: 313565.893, elev: 100.017 },
+                { name: "Narahari Brigade top", y: 2469141.061, x: 313580.037, elev: 100.010 },
+                { name: "Narahari Brigade centar", y: 2469138.959, x: 313586.302, elev: 100.021 },
+                { name: "Narahari sreet light poll 2", y: 2469132.905, x: 313604.481, elev: 99.971 },
+                { name: "Narahari Brigade top", y: 2469127.723, x: 313618.387, elev: 99.561 },
+                { name: "Narahari GL", y: 2469134.845, x: 313602.996, elev: 90.828 },
+                { name: "Narahari GL", y: 2469135.328, x: 313604.418, elev: 91.998 },
+                { name: "Narahari GL", y: 2469133.971, x: 313608.434, elev: 94.108 },
+                { name: "Narahari GL", y: 2469133.054, x: 313612.469, elev: 95.827 },
+                { name: "Narahari GL", y: 2469131.627, x: 313615.805, elev: 97.567 },
+                { name: "Narahari leval 25", y: 2469140.024, x: 313583.079, elev: 100.030 }
+            ],
+            "Vadsar_Bridge": [
+                { name: "Vadsar base_1", y: 2463323.084, x: 311277.813, elev: 101.141 },
+                { name: "Vadsar TBM", y: 2463322.390, x: 311277.116, elev: 100.000 },
+                { name: "Vadsar TBM", y: 2463322.419, x: 311277.147, elev: 99.992 },
+                { name: "Vadsar WATAR top", y: 2463317.528, x: 311291.291, elev: 89.608 },
+                { name: "Vadsar GL", y: 2463319.188, x: 311289.389, elev: 89.795 },
+                { name: "Vadsar GL", y: 2463322.918, x: 311283.413, elev: 93.236 },
+                { name: "Vadsar GL", y: 2463325.022, x: 311277.889, elev: 94.672 },
+                { name: "Vadsar GL", y: 2463326.543, x: 311276.392, elev: 96.199 },
+                { name: "Vadsar GL", y: 2463328.089, x: 311273.844, elev: 97.014 },
+                { name: "Vadsar GL", y: 2463329.333, x: 311271.857, elev: 97.955 },
+                { name: "Vadsar Nasurry cornar GL", y: 2463333.296, x: 311263.279, elev: 99.226 },
+                { name: "Vadsar Brigade top", y: 2463327.040, x: 311273.138, elev: 100.228 },
+                { name: "Vadsar Brigade top", y: 2463320.034, x: 311283.881, elev: 100.224 },
+                { name: "Vadsar Brigade center top", y: 2463311.210, x: 311297.352, elev: 100.197 },
+                { name: "Vadsar Brigade top", y: 2463304.303, x: 311307.849, elev: 100.221 },
+                { name: "Vadsar Brigade top", y: 2463295.875, x: 311320.665, elev: 100.264 },
+                { name: "Vadsar WATAR top", y: 2463304.047, x: 311306.924, elev: 89.585 },
+                { name: "Vadsar GL", y: 2463303.803, x: 311309.823, elev: 91.257 },
+                { name: "Vadsar GL", y: 2463303.118, x: 311311.534, elev: 92.388 },
+                { name: "Vadsar GL", y: 2463302.455, x: 311315.165, elev: 94.450 },
+                { name: "Vadsar GL", y: 2463299.275, x: 311317.559, elev: 95.082 },
+                { name: "Vadsar GL", y: 2463297.685, x: 311318.314, elev: 96.082 },
+                { name: "Vadsar GL", y: 2463291.493, x: 311328.370, elev: 98.827 },
+                { name: "Vadsar GL", y: 2463289.558, x: 311330.601, elev: 99.465 }
+            ],
+            "Dena_Bridge": [
+                { name: "Dena base_1", y: 2473418.645, x: 315993.593, elev: 101.719 },
+                { name: "Dena Dami TBM", y: 2473429.573, x: 315995.303, elev: 100.000 },
+                { name: "Dena Dami TBM", y: 2473429.576, x: 315995.304, elev: 99.994 },
+                { name: "Dena Dami TBM", y: 2473437.441, x: 315998.570, elev: 99.998 },
+                { name: "Dena Dami TBM", y: 2473434.174, x: 316006.431, elev: 99.968 },
+                { name: "Dena pillar", y: 2473426.224, x: 316003.181, elev: 99.991 },
+                { name: "Dena Watar leval", y: 2473431.480, x: 316033.775, elev: 94.519 },
+                { name: "Dena GL", y: 2473435.047, x: 316027.915, elev: 97.825 },
+                { name: "Dena GL", y: 2473437.151, x: 316022.510, elev: 97.869 },
+                { name: "Dena pillar cornar", y: 2473441.320, x: 316012.980, elev: 98.515 },
+                { name: "Dena RL 32.388", y: 2473442.418, x: 316013.314, elev: 98.809 },
+                { name: "Dena GL", y: 2473437.250, x: 316009.410, elev: 100.330 },
+                { name: "Dena GL", y: 2473441.502, x: 316011.338, elev: 100.778 },
+                { name: "Dena GL", y: 2473443.268, x: 316003.636, elev: 103.475 },
+                { name: "Dena GL", y: 2473445.585, x: 315999.649, elev: 106.263 },
+                { name: "Dena GL", y: 2473449.286, x: 315994.326, elev: 110.914 },
+                { name: "Dena Brigade top", y: 2473450.159, x: 315995.582, elev: 111.165 },
+                { name: "Dena Brigade top", y: 2473443.427, x: 316011.657, elev: 111.287 },
+                { name: "Dena Brigade top", y: 2473433.930, x: 316032.686, elev: 111.326 },
+                { name: "Dena Brigade pillar top", y: 2473453.275, x: 316013.128, elev: 112.339 },
+                { name: "Dena Brigade pillar top", y: 2473453.171, x: 316013.309, elev: 112.138 },
+                { name: "Dena Brigade wol top", y: 2473453.173, x: 316013.317, elev: 112.137 },
+                { name: "Dena Brigade wol top", y: 2473448.274, x: 316024.818, elev: 112.153 },
+                { name: "Dena Brigade wol top sentar", y: 2473441.889, x: 316039.795, elev: 112.198 },
+                { name: "Dena Brigade wol top", y: 2473432.149, x: 316062.704, elev: 112.160 },
+                { name: "Dena Brigade wol top", y: 2473426.580, x: 316075.793, elev: 112.133 },
+                { name: "Dena Brigade wol top end", y: 2473420.418, x: 316090.497, elev: 111.314 },
+                { name: "Dena Brigade wol top end", y: 2473420.544, x: 316090.405, elev: 112.350 },
+                { name: "Dena Brigade wol top sentar 2", y: 2473440.982, x: 316041.970, elev: 112.199 },
+                { name: "Dena GL", y: 2473459.229, x: 315999.298, elev: 111.498 },
+                { name: "Dena near wall", y: 2473451.687, x: 316017.432, elev: 98.534 },
+                { name: "Dena near wall", y: 2473451.691, x: 316017.433, elev: 98.515 },
+                { name: "Dena GL", y: 2473449.458, x: 316025.895, elev: 98.189 },
+                { name: "Dena GL", y: 2473447.304, x: 316029.536, elev: 98.255 },
+                { name: "Dena GL", y: 2473445.949, x: 316032.785, elev: 95.918 },
+                { name: "Dena Watar leval", y: 2473444.024, x: 316037.129, elev: 94.493 },
+                { name: "Dena GL", y: 2473452.082, x: 316016.755, elev: 105.449 },
+                { name: "Dena GL", y: 2473466.745, x: 316021.124, elev: 105.515 },
+                { name: "Dena GL", y: 2473470.450, x: 316011.882, elev: 110.708 },
+                { name: "Dena GL", y: 2473471.937, x: 316007.189, elev: 111.557 },
+                { name: "Dena GL", y: 2473456.088, x: 316005.613, elev: 111.348 },
+                { name: "Dena GL", y: 2473419.464, x: 316091.634, elev: 111.062 },
+                { name: "Dena GL", y: 2473424.446, x: 316083.443, elev: 108.364 },
+                { name: "Dena GL", y: 2473428.436, x: 316072.640, elev: 105.765 },
+                { name: "Dena GL", y: 2473429.316, x: 316072.515, elev: 105.624 },
+                { name: "Dena GL", y: 2473442.272, x: 316078.543, elev: 106.193 },
+                { name: "Dena GL", y: 2473437.488, x: 316089.486, elev: 111.012 },
+                { name: "Dena GL", y: 2473441.115, x: 316057.875, elev: 97.989 },
+                { name: "Dena GL", y: 2473432.687, x: 316057.861, elev: 99.048 },
+                { name: "Dena GL", y: 2473448.035, x: 316065.953, elev: 99.890 },
+                { name: "Dena GL", y: 2473440.402, x: 316073.269, elev: 101.007 },
+                { name: "Dena GL", y: 2473428.462, x: 316071.990, elev: 99.677 },
+                { name: "Dena GL", y: 2473440.670, x: 316061.651, elev: 99.335 },
+                { name: "Dena Watar leval", y: 2473443.611, x: 316049.632, elev: 94.515 }
+            ]
+        };
+
+        // Location colors
+        const locationColors = {
+            "Ajwa_Sarovar": "#FF0000",
+            "Aasoj_Feeder": "#00FF00",
+            "Vishwamitri_Old_Gate": "#FFA500",
+            "Vishwamitri_Radial": "#0000FF",
+            "Hansapura_Waste_Weir": "#800080",
+            "Kodarwaya_Bridge": "#FF8000",
+            "Mundhela_Waste_Weir": "#8B0000",
+            "Unjeti_Gate": "#008080",
+            "Zoriya_Gate": "#FF1493",
+            "Narahari_Bridge": "#8B4513",
+            "Dena_Bridge": "#32CD32",
+            "Vadsar_Bridge": "#FF69B4"
+        };
+
+        // Global variables
+        let map;
+        let scene, camera, renderer, controls;
+        let currentLocationData = null;
+        let terrainMesh = null;
+        let pointLabels = [];
+
+        // Initialize the application
+        function init() {
+            initMap();
+            init3D();
+            populateLocationList();
+            setupControls();
+        }
+
+        // Initialize 2D map
+        function initMap() {
+            map = L.map('map').setView([22.3072, 73.1812], 10);
+            
+            L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+                maxZoom: 20,
+                subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+                attribution: '&copy; Google Satellite'
+            }).addTo(map);
+        }
+
+        // Initialize 3D scene
+        function init3D() {
+            const container = document.querySelector('.viewer-3d');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 10000);
+            camera.position.set(0, 100, 100);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(100, 100, 50);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            const container = document.querySelector('.viewer-3d');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Populate location list
+        function populateLocationList() {
+            const locationList = document.getElementById('locationList');
+
+            Object.keys(locationGroups).forEach(locationName => {
+                const points = locationGroups[locationName];
+                const color = locationColors[locationName];
+
+                // Calculate statistics
+                const elevations = points.map(p => p.elev);
+                const minElev = Math.min(...elevations);
+                const maxElev = Math.max(...elevations);
+
+                const locationItem = document.createElement('div');
+                locationItem.className = 'location-item';
+                locationItem.dataset.location = locationName;
+
+                locationItem.innerHTML = `
+                    <div class="location-color" style="background-color: ${color}"></div>
+                    <div class="location-info">
+                        <div class="location-name">${locationName.replace(/_/g, ' ')}</div>
+                        <div class="location-stats">${points.length} points | ${minElev.toFixed(1)}m - ${maxElev.toFixed(1)}m</div>
+                    </div>
+                `;
+
+                locationItem.addEventListener('click', () => selectLocation(locationName));
+                locationList.appendChild(locationItem);
+            });
+        }
+
+        // Select and display location
+        function selectLocation(locationName) {
+            // Update UI
+            document.querySelectorAll('.location-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            document.querySelector(`[data-location="${locationName}"]`).classList.add('active');
+
+            // Update current location data
+            currentLocationData = {
+                name: locationName,
+                points: locationGroups[locationName],
+                color: locationColors[locationName]
+            };
+
+            // Update 2D map
+            updateMap();
+
+            // Update 3D view
+            update3D();
+
+            // Update info panel
+            updateInfo();
+
+            // Hide loading message
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // Update 2D map
+        function updateMap() {
+            if (!currentLocationData) return;
+
+            // Clear existing layers
+            map.eachLayer(layer => {
+                if (layer instanceof L.CircleMarker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            const points = currentLocationData.points;
+            const color = currentLocationData.color;
+            const latlngs = [];
+
+            // Add markers and collect coordinates
+            points.forEach(point => {
+                const [lon, lat] = proj4(utm43n, wgs84, [point.x, point.y]);
+
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 5,
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.8,
+                    weight: 2
+                }).addTo(map);
+
+                marker.bindTooltip(`${point.name}<br/>${point.elev} m`, {
+                    permanent: false,
+                    direction: 'top'
+                });
+
+                latlngs.push([lat, lon]);
+            });
+
+            // Draw connecting line
+            if (latlngs.length > 1) {
+                L.polyline(latlngs, {
+                    color: color,
+                    weight: 3,
+                    opacity: 0.7
+                }).addTo(map);
+            }
+
+            // Fit map to bounds
+            if (latlngs.length > 0) {
+                map.fitBounds(latlngs);
+            }
+        }
+
+        // Update 3D view
+        function update3D() {
+            if (!currentLocationData) return;
+
+            // Clear existing terrain
+            if (terrainMesh) {
+                scene.remove(terrainMesh);
+                terrainMesh = null;
+            }
+
+            // Clear existing labels
+            pointLabels.forEach(label => scene.remove(label));
+            pointLabels = [];
+
+            const points = currentLocationData.points;
+            const color = currentLocationData.color;
+
+            // Normalize coordinates to local space
+            const minX = Math.min(...points.map(p => p.x));
+            const maxX = Math.max(...points.map(p => p.x));
+            const minY = Math.min(...points.map(p => p.y));
+            const maxY = Math.max(...points.map(p => p.y));
+            const minZ = Math.min(...points.map(p => p.elev));
+            const maxZ = Math.max(...points.map(p => p.elev));
+
+            const scaleX = 100 / (maxX - minX);
+            const scaleY = 100 / (maxY - minY);
+            const elevationScale = parseFloat(document.getElementById('elevationScale').value);
+
+            // Create terrain geometry
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+            const colors = [];
+
+            // Add survey points
+            points.forEach(point => {
+                const x = (point.x - minX) * scaleX - 50;
+                const z = (point.y - minY) * scaleY - 50;
+                const y = (point.elev - minZ) * elevationScale;
+
+                vertices.push(x, y, z);
+
+                // Color based on elevation
+                const elevationRatio = (point.elev - minZ) / (maxZ - minZ);
+                const r = elevationRatio;
+                const g = 1 - elevationRatio;
+                const b = 0.5;
+                colors.push(r, g, b);
+            });
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+            // Create material based on view mode
+            const viewMode = document.getElementById('viewMode').value;
+            let material;
+
+            switch(viewMode) {
+                case 'wireframe':
+                    material = new THREE.LineBasicMaterial({
+                        vertexColors: true,
+                        linewidth: 2
+                    });
+                    terrainMesh = new THREE.LineSegments(geometry, material);
+                    break;
+                case 'points':
+                    material = new THREE.PointsMaterial({
+                        vertexColors: true,
+                        size: 3
+                    });
+                    terrainMesh = new THREE.Points(geometry, material);
+                    break;
+                default: // terrain
+                    // Create triangulated surface
+                    const indices = [];
+                    for (let i = 0; i < points.length - 2; i++) {
+                        indices.push(i, i + 1, i + 2);
+                    }
+                    geometry.setIndex(indices);
+                    geometry.computeVertexNormals();
+
+                    material = new THREE.MeshLambertMaterial({
+                        vertexColors: true,
+                        side: THREE.DoubleSide
+                    });
+                    terrainMesh = new THREE.Mesh(geometry, material);
+                    break;
+            }
+
+            scene.add(terrainMesh);
+
+            // Add point labels if enabled
+            if (document.getElementById('showLabels').checked) {
+                addPointLabels(points, minX, maxX, minY, maxY, minZ, scaleX, scaleY, elevationScale);
+            }
+
+            // Position camera
+            camera.position.set(0, 50, 100);
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
+        // Add point labels
+        function addPointLabels(points, minX, maxX, minY, maxY, minZ, scaleX, scaleY, elevationScale) {
+            points.forEach(point => {
+                const x = (point.x - minX) * scaleX - 50;
+                const z = (point.y - minY) * scaleY - 50;
+                const y = (point.elev - minZ) * elevationScale + 5;
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.width = 256;
+                canvas.height = 64;
+
+                context.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+
+                context.fillStyle = 'white';
+                context.font = '16px Arial';
+                context.textAlign = 'center';
+                context.fillText(`${point.elev}m`, canvas.width / 2, 25);
+                context.fillText(point.name, canvas.width / 2, 45);
+
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(material);
+                sprite.position.set(x, y, z);
+                sprite.scale.set(10, 2.5, 1);
+
+                scene.add(sprite);
+                pointLabels.push(sprite);
+            });
+        }
+
+        // Update info panel
+        function updateInfo() {
+            if (!currentLocationData) return;
+
+            const points = currentLocationData.points;
+            const elevations = points.map(p => p.elev);
+            const minElev = Math.min(...elevations);
+            const maxElev = Math.max(...elevations);
+
+            // Calculate approximate area
+            const xs = points.map(p => p.x);
+            const ys = points.map(p => p.y);
+            const width = Math.max(...xs) - Math.min(...xs);
+            const height = Math.max(...ys) - Math.min(...ys);
+            const area = (width * height / 1000000).toFixed(2); // km²
+
+            document.getElementById('currentLocation').textContent = currentLocationData.name.replace(/_/g, ' ');
+            document.getElementById('pointCount').textContent = points.length;
+            document.getElementById('elevationRange').textContent = `${minElev.toFixed(1)}m - ${maxElev.toFixed(1)}m`;
+            document.getElementById('areaSize').textContent = `${area} km²`;
+        }
+
+        // Setup control handlers
+        function setupControls() {
+            const elevationScale = document.getElementById('elevationScale');
+            const scaleValue = document.getElementById('scaleValue');
+            const viewMode = document.getElementById('viewMode');
+            const showLabels = document.getElementById('showLabels');
+
+            elevationScale.addEventListener('input', () => {
+                scaleValue.textContent = elevationScale.value + 'x';
+                if (currentLocationData) update3D();
+            });
+
+            viewMode.addEventListener('change', () => {
+                if (currentLocationData) update3D();
+            });
+
+            showLabels.addEventListener('change', () => {
+                if (currentLocationData) update3D();
+            });
+        }
+
+        // Start the application
+        init();
+    </script>
+</body>
+</html>
