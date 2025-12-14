@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,6 +8,18 @@
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Chart.js datalabels plugin for showing sensor X positions -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+    <!-- jsPDF for PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+    <!-- SheetJS for Excel generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- html2canvas for chart capture -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         html, body, #map {
             height: 100%;
@@ -159,6 +172,468 @@
             font-weight: bold;
             color: #333;
         }
+
+        /* Cross-Section Controls */
+        .cross-section-controls {
+            position: absolute;
+            top: 110px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .control-label {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            font-size: 11px;
+            user-select: none;
+        }
+
+        .control-label input {
+            margin: 0 5px;
+        }
+
+        /* Side Panel */
+        .side-panel {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 400px;
+            height: 100vh;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+            z-index: 1001;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 20px;
+            padding-bottom: 40px;
+            box-sizing: border-box;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+        }
+
+        .side-panel.visible {
+            transform: translateX(0);
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .panel-header h3 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        .panel-info {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 12px;
+        }
+
+        .panel-info p {
+            margin: 5px 0;
+        }
+
+        .chart-container {
+            height: 250px;
+            margin-bottom: 20px;
+            padding-top: 30px;  /* Space for legend above chart */
+        }
+
+        .readings-section h4,
+        .sensor-section h4 {
+            font-size: 14px;
+            margin: 15px 0 10px 0;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .table-scroll {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        #readingsTable {
+            width: 100%;
+            font-size: 9px;
+            border-collapse: collapse;
+        }
+
+        #readingsTable th {
+            background: #f0f0f0;
+            padding: 6px 3px;
+            text-align: left;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            font-size: 9px;
+        }
+
+        #readingsTable td {
+            padding: 5px 3px;
+            border-bottom: 1px solid #eee;
+            white-space: nowrap;
+        }
+
+        #readingsTable tr.highlighted {
+            background-color: rgba(33, 150, 243, 0.3) !important;
+            outline: 2px solid #2196F3;
+        }
+
+        #readingsTable tr.disabled-point {
+            opacity: 0.5;
+            text-decoration: line-through;
+        }
+
+        #readingsTable tr {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #readingsTable tr:hover:not(.highlighted) {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+
+        .sensor-section {
+            margin-top: 20px;
+        }
+
+        .sensor-item {
+            background: #e3f2fd;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #2196F3;
+            font-size: 11px;
+            position: relative;
+        }
+
+        .sensor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .sensor-item .sensor-coords {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+        }
+
+        .remove-sensor {
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .edit-sensor {
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+
+        .edit-sensor:hover {
+            background: #1976D2;
+        }
+
+        .sensor-elev-input {
+            width: 80px;
+            padding: 2px 4px;
+            border: 1px solid #2196F3;
+            border-radius: 3px;
+            font-size: 11px;
+            text-align: center;
+        }
+
+        .sensor-elev-display {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            grid-column: 1 / -1;
+        }
+
+        #closePanelBtn {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #666;
+            line-height: 1;
+        }
+
+        #closePanelBtn:hover {
+            color: #000;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .modal-content h4 {
+            margin: 0 0 15px 0;
+        }
+
+        .modal-content p {
+            margin: 10px 0;
+        }
+
+        .modal-content label {
+            display: block;
+            margin: 15px 0;
+        }
+
+        .modal-content input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .modal-actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .btn-primary {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .btn-primary:hover {
+            background: #1976D2;
+        }
+
+        .btn-secondary {
+            background: #757575;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .btn-secondary:hover {
+            background: #616161;
+        }
+
+        /* Export/Import Buttons */
+        .export-controls {
+            display: flex;
+            gap: 8px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .export-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .export-btn:hover {
+            background: #45a049;
+        }
+
+        .export-btn.pdf {
+            background: #f44336;
+        }
+
+        .export-btn.pdf:hover {
+            background: #da190b;
+        }
+
+        .export-btn.excel {
+            background: #217346;
+        }
+
+        .export-btn.excel:hover {
+            background: #1a5c38;
+        }
+
+        .export-btn.import {
+            background: #FF9800;
+        }
+
+        .export-btn.import:hover {
+            background: #F57C00;
+        }
+
+        .export-btn.json {
+            background: #2196F3;
+        }
+
+        .export-btn.json:hover {
+            background: #1976D2;
+        }
+
+        #importFileInput {
+            display: none;
+        }
+
+        /* Image Offset Controls */
+        .image-offset-controls {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 5px;
+            padding: 8px 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+        }
+
+        .offset-input-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+        }
+
+        .offset-input-group input {
+            width: 60px;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 11px;
+            text-align: center;
+        }
+
+        .offset-btn {
+            background: rgba(156, 39, 176, 0.9);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 6px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .offset-btn:hover {
+            background: rgba(156, 39, 176, 1);
+        }
+
+        .offset-btn.active {
+            background: rgba(233, 30, 99, 0.9);
+        }
+
+        .offset-btn.reset {
+            background: #757575;
+        }
+
+        .offset-btn.reset:hover {
+            background: #616161;
+        }
+
+        /* Reference Line Styles */
+        .ref-line-info {
+            position: fixed;
+            bottom: 100px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            font-size: 12px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .ref-line-info.visible {
+            display: block;
+        }
+
+        .ref-line-info p {
+            margin: 4px 0;
+        }
+
+        .ref-line-info .angle-match {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .ref-line-info .angle-diff {
+            color: #f44336;
+            font-weight: bold;
+        }
+
+        .control-button.reference {
+            background: rgba(255, 152, 0, 0.9);
+        }
+
+        .control-button.reference.active {
+            background: rgba(230, 81, 0, 0.95);
+        }
     </style>
 </head>
 <body>
@@ -182,6 +657,37 @@
         </div>
     </div>
 
+    <!-- Cross-Section Controls -->
+    <div class="cross-section-controls">
+        <button class="control-button" id="crossSectionToggle">
+            📊 Cross Section
+        </button>
+        <label class="control-label">
+            Distance: <input type="number" id="perpDistanceInput" value="3" min="0.5" max="100" step="0.5" style="width: 60px;"> m
+        </label>
+        <button class="control-button" id="addSensorPoint">
+            📍 Add Sensor
+        </button>
+        <button class="control-button reference" id="referenceLineToggle">
+            📐 Reference Line
+        </button>
+        <button class="control-button" id="viewPanelBtn" style="background: rgba(76, 175, 80, 0.9);">
+            📈 View Panel
+        </button>
+        <button class="control-button" id="clearCrossSection">
+            🗑️ Clear
+        </button>
+    </div>
+
+    <!-- Reference Line Info Display -->
+    <div class="ref-line-info" id="refLineInfo">
+        <p><strong>📐 Reference vs Cross-Section</strong></p>
+        <p>Reference Angle: <span id="refAngle">-</span>°</p>
+        <p>Cross-Section Angle: <span id="csAngle">-</span>°</p>
+        <p>Difference: <span id="angleDiff">-</span>°</p>
+        <button onclick="clearReferenceLine()" style="margin-top: 8px; padding: 4px 10px; cursor: pointer;">Clear Reference</button>
+    </div>
+
     <div class="mobile-controls">
         <button class="control-button" id="layerToggle">
             📍 Maps (Hidden)
@@ -191,11 +697,127 @@
         </button>
     </div>
 
+    <!-- Image Offset Controls -->
+    <div class="image-offset-controls">
+        <button class="offset-btn" id="imageOffsetToggle">
+            🖼️ Drag Image
+        </button>
+        <div class="offset-input-group">
+            <label>X:</label>
+            <input type="number" id="offsetX" value="0" step="0.5">
+            <label>m</label>
+        </div>
+        <div class="offset-input-group">
+            <label>Y:</label>
+            <input type="number" id="offsetY" value="0" step="0.5">
+            <label>m</label>
+        </div>
+        <button class="offset-btn reset" id="resetOffset">
+            ↺ Reset
+        </button>
+    </div>
+
+    <!-- Cross-Section Side Panel -->
+    <div id="crossSectionPanel" class="side-panel" style="display: none;">
+        <div class="panel-header">
+            <h3>Cross Section Profile</h3>
+            <button id="closePanelBtn">×</button>
+        </div>
+
+        <!-- Location and Settings Info -->
+        <div class="panel-info">
+            <p><strong>Location:</strong> <span id="locationName">-</span></p>
+            <p><strong>Length:</strong> <span id="sectionLength">0</span> m</p>
+            <p><strong>Points:</strong> <span id="pointCount">0</span></p>
+            <p><strong>Perp. Distance:</strong> <span id="currentPerpDist">3</span> m</p>
+        </div>
+
+        <!-- Cross Section Chart -->
+        <div class="chart-container">
+            <canvas id="crossSectionChart"></canvas>
+        </div>
+
+        <!-- X and Y Readings Table -->
+        <div class="readings-section">
+            <h4>Distance & Elevation Readings</h4>
+            <div class="table-scroll">
+                <table id="readingsTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px; text-align: center;">✓</th>
+                            <th>Point</th>
+                            <th>Distance (m)</th>
+                            <th>Original Elev (m)</th>
+                            <th>Normalized (m)</th>
+                            <th>Type</th>
+                            <th>UTM X (m)</th>
+                            <th>UTM Y (m)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="readingsTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sensor Mounting Section -->
+        <div class="sensor-section">
+            <h4>Velocity cum Level Sensor Mounting</h4>
+            <div id="sensorList">
+                <!-- Sensor points added dynamically -->
+            </div>
+        </div>
+
+        <!-- Export/Import Section -->
+        <div class="sensor-section">
+            <h4>📁 Export / Import Profile</h4>
+            <div class="export-controls">
+                <button class="export-btn json" onclick="exportProfile()">
+                    💾 Export JSON
+                </button>
+                <button class="export-btn import" onclick="document.getElementById('importFileInput').click()">
+                    📂 Import JSON
+                </button>
+                <input type="file" id="importFileInput" accept=".json" onchange="importProfile(event)">
+            </div>
+            <div class="export-controls" style="margin-top: 10px;">
+                <button class="export-btn pdf" onclick="exportToPDF()">
+                    📄 Export PDF
+                </button>
+                <button class="export-btn excel" onclick="exportToExcel()">
+                    📊 Export Excel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Elevation Input Modal -->
+    <div id="elevationModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h4>Enter Sensor Elevation</h4>
+            <p>Location: <span id="modalLatLon">-</span></p>
+            <label>
+                Elevation (m):
+                <input type="number" id="customElevation" step="0.001" placeholder="e.g., 95.500">
+            </label>
+            <div class="modal-actions">
+                <button id="confirmElevation" class="btn-primary">Add Sensor</button>
+                <button id="cancelElevation" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.7.5/proj4.js"></script>
 
     <script>
+        // Register Chart.js datalabels plugin
+        if (typeof ChartDataLabels !== 'undefined') {
+            Chart.register(ChartDataLabels);
+        }
+
         // Initialize map
        const map = L.map('map', {
     maxZoom: 27
@@ -650,7 +1272,9 @@ baseMaps["Google Satellite"].addTo(map);
                 allMarkers.push({
                     marker: marker,
                     elevation: p.elev,
-                    tooltip: elevationTooltip
+                    tooltip: elevationTooltip,
+                    pointData: p,
+                    locationName: locationName
                 });
 
                 // Add detailed popup with location info
@@ -806,13 +1430,18 @@ baseMaps["Google Satellite"].addTo(map);
             const lat = e.latlng.lat;
             const lng = e.latlng.lng;
 
-            // Add marker
-            const marker = L.circleMarker([lat, lng], {
-                radius: 6,
-                color: '#dc3545',
-                fillColor: '#dc3545',
-                fillOpacity: 0.8,
-                weight: 2
+            // Create draggable marker with custom icon
+            const markerIndex = measurePoints.length;
+            const icon = L.divIcon({
+                className: 'measure-marker-icon',
+                html: `<div style="width: 12px; height: 12px; background: #dc3545; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [12, 12],
+                iconAnchor: [6, 6]
+            });
+
+            const marker = L.marker([lat, lng], {
+                icon: icon,
+                draggable: true
             }).addTo(map);
 
             measureMarkers.push(marker);
@@ -840,21 +1469,52 @@ baseMaps["Google Satellite"].addTo(map);
                 }).addTo(map);
 
                 // Calculate and display distance
-                const distance = calculateDistance(
-                    measurePoints[0][0], measurePoints[0][1],
-                    measurePoints[1][0], measurePoints[1][1]
-                );
+                updateMeasurementDistance();
 
-                distanceValue.textContent = distance.toFixed(2);
-                distanceDisplay.style.display = 'block';
-
-                // Reset for next measurement
+                // Reset measure mode
                 measureMode = false;
                 measureToggleBtn.classList.remove('active');
                 measureToggleBtn.innerHTML = '📏 Measure Distance';
                 map.getContainer().style.cursor = '';
             }
+
+            // Add drag handlers
+            marker.on('drag', function(e) {
+                updateMeasureLineOnDrag();
+            });
+            
+            marker.on('dragend', function(e) {
+                const newLatLng = e.target.getLatLng();
+                measurePoints[markerIndex] = [newLatLng.lat, newLatLng.lng];
+                updateMeasurementDistance();
+            });
         });
+
+        // Update measurement line during drag
+        function updateMeasureLineOnDrag() {
+            if (measureMarkers.length < 2 || !measureLine) return;
+            
+            const p1 = measureMarkers[0].getLatLng();
+            const p2 = measureMarkers[1].getLatLng();
+            
+            measureLine.setLatLngs([[p1.lat, p1.lng], [p2.lat, p2.lng]]);
+            
+            // Update distance during drag
+            const distance = calculateDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+            distanceValue.textContent = distance.toFixed(2);
+        }
+
+        // Update measurement distance
+        function updateMeasurementDistance() {
+            if (measurePoints.length < 2) return;
+            
+            const distance = calculateDistance(
+                measurePoints[0][0], measurePoints[0][1],
+                measurePoints[1][0], measurePoints[1][1]
+            );
+            distanceValue.textContent = distance.toFixed(2);
+            distanceDisplay.style.display = 'block';
+        }
 
         // Add mobile control toggle functionality
         const layerToggleBtn = document.getElementById('layerToggle');
@@ -889,6 +1549,2171 @@ baseMaps["Google Satellite"].addTo(map);
                 legendVisible = true;
             }
         });
+
+        // ===== IMAGE OFFSET FUNCTIONALITY =====
+        // Allows dragging the map tiles without moving survey points
+
+        let imageOffsetMode = false;
+        let imageOffsetX = 0;  // Offset in meters
+        let imageOffsetY = 0;  // Offset in meters
+        let dragStartLatLng = null;
+        let currentTilePane = null;
+
+        const imageOffsetToggle = document.getElementById('imageOffsetToggle');
+        const offsetXInput = document.getElementById('offsetX');
+        const offsetYInput = document.getElementById('offsetY');
+        const resetOffsetBtn = document.getElementById('resetOffset');
+
+        // Get the tile pane for applying transforms
+        currentTilePane = map.getPane('tilePane');
+
+        // Toggle image offset mode
+        imageOffsetToggle.addEventListener('click', function() {
+            imageOffsetMode = !imageOffsetMode;
+            
+            if (imageOffsetMode) {
+                this.classList.add('active');
+                this.innerHTML = '🖼️ Dragging...';
+                map.dragging.disable();
+                map.getContainer().style.cursor = 'move';
+                
+                // Add drag handlers
+                map.on('mousedown', onImageDragStart);
+                map.on('touchstart', onImageDragStart);
+            } else {
+                this.classList.remove('active');
+                this.innerHTML = '🖼️ Drag Image';
+                map.dragging.enable();
+                map.getContainer().style.cursor = '';
+                
+                // Remove drag handlers
+                map.off('mousedown', onImageDragStart);
+                map.off('touchstart', onImageDragStart);
+                map.off('mousemove', onImageDrag);
+                map.off('touchmove', onImageDrag);
+                map.off('mouseup', onImageDragEnd);
+                map.off('touchend', onImageDragEnd);
+            }
+        });
+
+        function onImageDragStart(e) {
+            if (!imageOffsetMode) return;
+            
+            dragStartLatLng = e.latlng;
+            
+            map.on('mousemove', onImageDrag);
+            map.on('touchmove', onImageDrag);
+            map.on('mouseup', onImageDragEnd);
+            map.on('touchend', onImageDragEnd);
+        }
+
+        function onImageDrag(e) {
+            if (!imageOffsetMode || !dragStartLatLng) return;
+            
+            const currentLatLng = e.latlng;
+            
+            // Calculate offset in meters using the map's current view
+            const startPoint = map.latLngToContainerPoint(dragStartLatLng);
+            const currentPoint = map.latLngToContainerPoint(currentLatLng);
+            
+            // Convert pixel difference to meters (approximate)
+            const metersPerPixel = getMetersPerPixel();
+            const deltaXMeters = (currentPoint.x - startPoint.x) * metersPerPixel;
+            const deltaYMeters = -(currentPoint.y - startPoint.y) * metersPerPixel;  // Invert Y
+            
+            // Update offsets
+            const newOffsetX = imageOffsetX + deltaXMeters;
+            const newOffsetY = imageOffsetY + deltaYMeters;
+            
+            // Apply the offset to tile pane
+            applyImageOffset(newOffsetX, newOffsetY);
+            
+            // Update input fields (temporary, during drag)
+            offsetXInput.value = newOffsetX.toFixed(1);
+            offsetYInput.value = newOffsetY.toFixed(1);
+        }
+
+        function onImageDragEnd(e) {
+            if (!imageOffsetMode) return;
+            
+            if (dragStartLatLng && e.latlng) {
+                // Calculate final offset
+                const startPoint = map.latLngToContainerPoint(dragStartLatLng);
+                const endPoint = map.latLngToContainerPoint(e.latlng);
+                
+                const metersPerPixel = getMetersPerPixel();
+                const deltaXMeters = (endPoint.x - startPoint.x) * metersPerPixel;
+                const deltaYMeters = -(endPoint.y - startPoint.y) * metersPerPixel;
+                
+                // Update stored offsets
+                imageOffsetX += deltaXMeters;
+                imageOffsetY += deltaYMeters;
+                
+                // Update input fields
+                offsetXInput.value = imageOffsetX.toFixed(1);
+                offsetYInput.value = imageOffsetY.toFixed(1);
+            }
+            
+            dragStartLatLng = null;
+            
+            // Remove move handlers but keep mode active
+            map.off('mousemove', onImageDrag);
+            map.off('touchmove', onImageDrag);
+            map.off('mouseup', onImageDragEnd);
+            map.off('touchend', onImageDragEnd);
+        }
+
+        function getMetersPerPixel() {
+            // Calculate meters per pixel at current zoom level and latitude
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            
+            // Earth circumference at equator in meters
+            const earthCircumference = 40075016.686;
+            
+            // Meters per pixel at equator at zoom 0 = earth circumference / 256
+            // Adjusted for latitude and zoom level
+            const metersPerPixelAtEquator = earthCircumference / 256;
+            const latitudeRadians = center.lat * Math.PI / 180;
+            const metersPerPixel = metersPerPixelAtEquator * Math.cos(latitudeRadians) / Math.pow(2, zoom);
+            
+            return metersPerPixel;
+        }
+
+        function applyImageOffset(offsetX, offsetY) {
+            // Convert meters to pixels
+            const metersPerPixel = getMetersPerPixel();
+            const pixelOffsetX = offsetX / metersPerPixel;
+            const pixelOffsetY = -offsetY / metersPerPixel;  // Invert Y for screen coordinates
+            
+            // Apply CSS transform to tile pane
+            if (currentTilePane) {
+                const currentTransform = currentTilePane.style.transform || '';
+                // Extract existing translate values if any (from Leaflet's internal transforms)
+                const match = currentTransform.match(/translate3d\(([^,]+),\s*([^,]+),\s*([^)]+)\)/);
+                
+                if (match) {
+                    // Leaflet uses translate3d, we need to add our offset
+                    const baseX = parseFloat(match[1]);
+                    const baseY = parseFloat(match[2]);
+                    currentTilePane.style.transform = `translate3d(${baseX + pixelOffsetX}px, ${baseY + pixelOffsetY}px, 0px)`;
+                } else {
+                    currentTilePane.style.transform = `translate(${pixelOffsetX}px, ${pixelOffsetY}px)`;
+                }
+            }
+        }
+
+        // Manual input handlers
+        offsetXInput.addEventListener('change', function() {
+            imageOffsetX = parseFloat(this.value) || 0;
+            applyImageOffset(imageOffsetX, imageOffsetY);
+        });
+
+        offsetYInput.addEventListener('change', function() {
+            imageOffsetY = parseFloat(this.value) || 0;
+            applyImageOffset(imageOffsetX, imageOffsetY);
+        });
+
+        // Reset offset
+        resetOffsetBtn.addEventListener('click', function() {
+            imageOffsetX = 0;
+            imageOffsetY = 0;
+            offsetXInput.value = '0';
+            offsetYInput.value = '0';
+            
+            // Reset tile pane transform
+            if (currentTilePane) {
+                // We need to preserve Leaflet's base transform, just reset our offset
+                // Force a redraw by triggering a tiny pan
+                map.panBy([0, 0]);
+            }
+        });
+
+        // Re-apply offset when map moves or zooms
+        map.on('moveend zoomend', function() {
+            if (imageOffsetX !== 0 || imageOffsetY !== 0) {
+                // Small delay to let Leaflet finish its transforms
+                setTimeout(() => {
+                    applyImageOffset(imageOffsetX, imageOffsetY);
+                }, 50);
+            }
+        });
+
+        // ===== CROSS-SECTION ANALYSIS FUNCTIONALITY =====
+
+        // State Management Variables
+        let crossSectionMode = false;
+        let crossSectionPoints = [];
+        let crossSectionLine = null;
+        let crossSectionMarkers = [];
+        let projectedPoints = [];
+        let selectedLocation = null;
+        let sensorPoints = [];
+        let perpDistanceThreshold = 3.0;
+        let currentChart = null;
+        let sensorMarkers = [];
+        let highlightedMarkers = [];  // Markers highlighted as part of cross-section
+        let manualPointOverrides = {}; // Manual inclusion/exclusion overrides {pointKey: true/false}
+
+        // Reference Line State
+        let referenceLineMode = false;
+        let referenceLinePoints = [];
+        let referenceLine = null;
+        let referenceLineMarkers = [];
+
+        // Get control elements
+        const crossSectionToggle = document.getElementById('crossSectionToggle');
+        const clearCrossSectionBtn = document.getElementById('clearCrossSection');
+        const addSensorBtn = document.getElementById('addSensorPoint');
+        const perpDistanceInput = document.getElementById('perpDistanceInput');
+        const crossSectionPanel = document.getElementById('crossSectionPanel');
+        const closePanelBtn = document.getElementById('closePanelBtn');
+        const referenceLineToggle = document.getElementById('referenceLineToggle');
+        const refLineInfo = document.getElementById('refLineInfo');
+        const viewPanelBtn = document.getElementById('viewPanelBtn');
+
+        // View Panel button handler
+        viewPanelBtn.addEventListener('click', function() {
+            if (crossSectionPoints.length < 2) {
+                alert('No cross-section profile exists. Please create a cross-section first by clicking two points on the map.');
+                return;
+            }
+            
+            // Show the panel
+            crossSectionPanel.style.display = 'block';
+            setTimeout(() => {
+                crossSectionPanel.classList.add('visible');
+            }, 10);
+        });
+
+        // Update perpendicular distance threshold when input changes
+        perpDistanceInput.addEventListener('change', function() {
+            perpDistanceThreshold = parseFloat(this.value) || 3.0;
+            document.getElementById('currentPerpDist').textContent = perpDistanceThreshold.toFixed(1);
+
+            // Regenerate cross-section if one exists
+            if (crossSectionPoints.length === 2) {
+                generateCrossSection();
+            }
+        });
+
+        // Cross-section toggle handler
+        crossSectionToggle.addEventListener('click', function() {
+            crossSectionMode = !crossSectionMode;
+            if (crossSectionMode) {
+                // Disable other modes
+                referenceLineMode = false;
+                sensorAddMode = false;
+                referenceLineToggle.classList.remove('active');
+                referenceLineToggle.innerHTML = '📐 Reference Line';
+                addSensorBtn.classList.remove('active');
+                addSensorBtn.innerHTML = '📍 Add Sensor';
+
+                this.classList.add('active');
+                this.innerHTML = '📊 Selecting...';
+                map.getContainer().style.cursor = 'crosshair';
+
+                // Close all popups and disable popup opening
+                map.closePopup();
+                allMarkers.forEach(markerData => {
+                    markerData.marker.closePopup();
+                    markerData.marker.unbindPopup();
+                });
+            } else {
+                this.classList.remove('active');
+                this.innerHTML = '📊 Cross Section';
+                map.getContainer().style.cursor = '';
+
+                // Re-enable popups
+                allMarkers.forEach(markerData => {
+                    const p = markerData.pointData;
+                    const locationName = markerData.locationName;
+                    const markerLatlng = markerData.marker.getLatLng();
+
+                    markerData.marker.bindPopup(`
+                        <strong>${locationName.replace(/_/g, ' ')}</strong><br/>
+                        <strong>Point:</strong> ${p.name}<br/>
+                        <strong>Elevation:</strong> ${p.elev} m<br/>
+                        <strong>Coordinates:</strong><br/>
+                        Northing: ${p.y.toFixed(3)} m<br/>
+                        Easting: ${p.x.toFixed(3)} m<br/>
+                        Lat/Lon: ${markerLatlng.lat.toFixed(6)}°, ${markerLatlng.lng.toFixed(6)}°
+                    `);
+                });
+            }
+        });
+
+        // Clear cross-section button
+        clearCrossSectionBtn.addEventListener('click', clearCrossSection);
+
+        function clearCrossSection() {
+            crossSectionPoints = [];
+            selectedLocation = null;
+            projectedPoints = [];
+            manualPointOverrides = {};  // Clear manual overrides
+
+            // Remove line and markers
+            if (crossSectionLine) {
+                map.removeLayer(crossSectionLine);
+                crossSectionLine = null;
+            }
+            crossSectionMarkers.forEach(marker => map.removeLayer(marker));
+            crossSectionMarkers = [];
+
+            // Remove highlights
+            highlightedMarkers.forEach(highlight => map.removeLayer(highlight));
+            highlightedMarkers = [];
+
+            // Clear chart
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+
+            // Hide panel
+            crossSectionPanel.classList.remove('visible');
+            setTimeout(() => {
+                crossSectionPanel.style.display = 'none';
+            }, 300);
+
+            // Reset mode
+            if (crossSectionMode) {
+                crossSectionToggle.innerHTML = '📊 Selecting...';
+            }
+        }
+
+        // Close panel button
+        closePanelBtn.addEventListener('click', function() {
+            crossSectionPanel.classList.remove('visible');
+            setTimeout(() => {
+                crossSectionPanel.style.display = 'none';
+            }, 300);
+        });
+
+        // Map click handler for cross-section selection
+        map.on('click', function(e) {
+            if (!crossSectionMode || sensorAddMode || referenceLineMode) return;
+
+            const latlng = e.latlng;
+
+            // Try to find if clicked on existing marker
+            let clickedMarkerData = findMarkerAtLocation(latlng);
+
+            if (clickedMarkerData) {
+                // Clicked on existing point
+                addCrossSectionPoint({
+                    x: clickedMarkerData.pointData.x,
+                    y: clickedMarkerData.pointData.y,
+                    lat: latlng.lat,
+                    lng: latlng.lng,
+                    existing: true,
+                    location: clickedMarkerData.locationName
+                });
+            } else {
+                // Clicked on map - convert to UTM
+                const utm = proj4(wgs84, utm43n, [latlng.lng, latlng.lat]);
+
+                // If this is the first point and no location selected, prompt for location
+                if (crossSectionPoints.length === 0) {
+                    selectedLocation = promptForLocation();
+                    if (!selectedLocation) return;
+                }
+
+                addCrossSectionPoint({
+                    x: utm[0],  // Easting
+                    y: utm[1],  // Northing
+                    lat: latlng.lat,
+                    lng: latlng.lng,
+                    existing: false,
+                    location: selectedLocation
+                });
+            }
+        });
+
+        function findMarkerAtLocation(latlng) {
+            // Find the closest marker to this location
+            const threshold = 0.0001; // ~10 meters max search radius
+            let closestMarker = null;
+            let closestDist = Infinity;
+
+            for (let i = 0; i < allMarkers.length; i++) {
+                const marker = allMarkers[i];
+                const markerLatlng = marker.marker.getLatLng();
+
+                const dist = Math.sqrt(
+                    Math.pow(markerLatlng.lat - latlng.lat, 2) +
+                    Math.pow(markerLatlng.lng - latlng.lng, 2)
+                );
+
+                if (dist < threshold && dist < closestDist) {
+                    closestDist = dist;
+                    closestMarker = marker;
+                }
+            }
+            return closestMarker;
+        }
+
+        // ===== REFERENCE LINE FUNCTIONALITY =====
+
+        // Reference line toggle handler
+        referenceLineToggle.addEventListener('click', function() {
+            referenceLineMode = !referenceLineMode;
+            
+            // Disable other modes when reference line mode is active
+            if (referenceLineMode) {
+                crossSectionMode = false;
+                sensorAddMode = false;
+                crossSectionToggle.classList.remove('active');
+                crossSectionToggle.innerHTML = '📊 Cross Section';
+                addSensorBtn.classList.remove('active');
+                addSensorBtn.innerHTML = '📍 Add Sensor';
+                
+                this.classList.add('active');
+                this.innerHTML = '📐 Selecting...';
+                map.getContainer().style.cursor = 'crosshair';
+            } else {
+                this.classList.remove('active');
+                this.innerHTML = '📐 Reference Line';
+                map.getContainer().style.cursor = '';
+            }
+        });
+
+        // Reference line click handler
+        map.on('click', function(e) {
+            if (!referenceLineMode) return;
+
+            const latlng = e.latlng;
+            const utm = proj4(wgs84, utm43n, [latlng.lng, latlng.lat]);
+
+            if (referenceLinePoints.length >= 2) {
+                // Clear existing reference line and start new
+                clearReferenceLine();
+            }
+
+            referenceLinePoints.push({
+                lat: latlng.lat,
+                lng: latlng.lng,
+                x: utm[0],
+                y: utm[1]
+            });
+
+            // Add draggable marker
+            const markerIndex = referenceLinePoints.length - 1;
+            const markerColor = markerIndex === 0 ? '#FF9800' : '#E65100';
+            
+            // Use regular marker with custom icon for dragging support
+            const icon = L.divIcon({
+                className: 'ref-marker-icon',
+                html: `<div style="width: 16px; height: 16px; background: ${markerColor}; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            
+            const marker = L.marker([latlng.lat, latlng.lng], {
+                icon: icon,
+                draggable: true
+            }).addTo(map);
+            
+            marker.bindTooltip(`Ref Point ${markerIndex + 1}`, {
+                permanent: true,
+                direction: 'top',
+                offset: [0, -10]
+            });
+
+            marker.on('drag', function(e) {
+                updateReferenceLineOnDrag();
+            });
+            
+            marker.on('dragend', function(e) {
+                const newLatLng = e.target.getLatLng();
+                const utm = proj4(wgs84, utm43n, [newLatLng.lng, newLatLng.lat]);
+                referenceLinePoints[markerIndex].lat = newLatLng.lat;
+                referenceLinePoints[markerIndex].lng = newLatLng.lng;
+                referenceLinePoints[markerIndex].x = utm[0];
+                referenceLinePoints[markerIndex].y = utm[1];
+                updateAngleComparison();
+            });
+            
+            referenceLineMarkers.push(marker);
+
+            // Draw line when 2 points selected
+            if (referenceLinePoints.length === 2) {
+                drawReferenceLine();
+                referenceLineMode = false;
+                referenceLineToggle.classList.remove('active');
+                referenceLineToggle.innerHTML = '📐 Reference Line';
+                map.getContainer().style.cursor = '';
+            }
+        });
+
+        // Update reference line during drag
+        function updateReferenceLineOnDrag() {
+            if (referenceLineMarkers.length < 2) return;
+            
+            const p1 = referenceLineMarkers[0].getLatLng();
+            const p2 = referenceLineMarkers[1].getLatLng();
+            
+            if (referenceLine) {
+                referenceLine.setLatLngs([[p1.lat, p1.lng], [p2.lat, p2.lng]]);
+            }
+        }
+
+        function drawReferenceLine() {
+            if (referenceLinePoints.length < 2) return;
+
+            const p1 = referenceLinePoints[0];
+            const p2 = referenceLinePoints[1];
+
+            // Draw the line
+            referenceLine = L.polyline(
+                [[p1.lat, p1.lng], [p2.lat, p2.lng]],
+                {
+                    color: '#FF9800',
+                    weight: 3,
+                    opacity: 0.8,
+                    dashArray: '10, 10'  // Dashed line to distinguish from cross-section
+                }
+            ).addTo(map);
+
+            // Calculate and show angle comparison
+            updateAngleComparison();
+        }
+
+        function calculateLineAngle(p1, p2) {
+            // Calculate angle in degrees from horizontal (east)
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+            // Normalize to 0-180 range (we don't care about direction)
+            if (angle < 0) angle += 180;
+            if (angle > 180) angle -= 180;
+            return angle;
+        }
+
+        function updateAngleComparison() {
+            if (referenceLinePoints.length < 2) {
+                refLineInfo.classList.remove('visible');
+                return;
+            }
+
+            const refAngle = calculateLineAngle(referenceLinePoints[0], referenceLinePoints[1]);
+            document.getElementById('refAngle').textContent = refAngle.toFixed(2);
+
+            if (crossSectionPoints.length === 2) {
+                const csAngle = calculateLineAngle(crossSectionPoints[0], crossSectionPoints[1]);
+                document.getElementById('csAngle').textContent = csAngle.toFixed(2);
+
+                // Calculate difference (consider parallel lines have 0 or 180 degree difference)
+                let diff = Math.abs(refAngle - csAngle);
+                if (diff > 90) diff = 180 - diff;
+                
+                const diffSpan = document.getElementById('angleDiff');
+                diffSpan.textContent = diff.toFixed(2);
+                
+                // Color code the difference
+                if (diff < 1) {
+                    diffSpan.className = 'angle-match';
+                    diffSpan.textContent += ' ✓ Parallel!';
+                } else if (diff < 5) {
+                    diffSpan.className = 'angle-match';
+                    diffSpan.textContent += ' (Nearly parallel)';
+                } else {
+                    diffSpan.className = 'angle-diff';
+                }
+            } else {
+                document.getElementById('csAngle').textContent = 'Not set';
+                document.getElementById('angleDiff').textContent = '-';
+                document.getElementById('angleDiff').className = '';
+            }
+
+            refLineInfo.classList.add('visible');
+        }
+
+        function clearReferenceLine() {
+            // Remove line
+            if (referenceLine) {
+                map.removeLayer(referenceLine);
+                referenceLine = null;
+            }
+
+            // Remove markers
+            referenceLineMarkers.forEach(marker => map.removeLayer(marker));
+            referenceLineMarkers = [];
+
+            // Clear points
+            referenceLinePoints = [];
+
+            // Hide info panel
+            refLineInfo.classList.remove('visible');
+        }
+
+        // Make clearReferenceLine available globally for the button onclick
+        window.clearReferenceLine = clearReferenceLine;
+
+        // Update angle comparison when cross-section changes
+        const originalGenerateCrossSection = typeof generateCrossSection === 'function' ? generateCrossSection : null;
+
+        function promptForLocation() {
+            const locations = Object.keys(locationGroups);
+            const selection = prompt('Select location group:\n\n' +
+                locations.map((loc, i) => `${i + 1}. ${loc}`).join('\n') +
+                '\n\nEnter number:');
+
+            if (selection) {
+                const index = parseInt(selection) - 1;
+                if (index >= 0 && index < locations.length) {
+                    return locations[index];
+                }
+            }
+            return null;
+        }
+
+        function addCrossSectionPoint(point) {
+            // Validate location consistency
+            if (crossSectionPoints.length === 0) {
+                selectedLocation = point.location;
+            } else if (point.location !== selectedLocation) {
+                alert('Please select points from the same location: ' + selectedLocation);
+                return;
+            }
+
+            if (crossSectionPoints.length >= 2) {
+                alert('Cross-section line already defined. Clear to create a new one.');
+                return;
+            }
+
+            crossSectionPoints.push(point);
+
+            // Add draggable marker
+            const markerIndex = crossSectionPoints.length - 1;
+            const marker = L.marker([point.lat, point.lng], {
+                draggable: true,
+                icon: L.divIcon({
+                    className: 'cross-section-marker',
+                    html: `<div style="background: #FFA726; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                })
+            }).addTo(map);
+
+            marker.bindTooltip(crossSectionPoints.length === 1 ? 'Start (drag to move)' : 'End (drag to move)', {
+                permanent: true,
+                direction: 'top',
+                className: 'elev-label',
+                offset: [0, -10]
+            });
+
+            // Add drag event handler
+            marker.on('dragend', function(e) {
+                const newLatLng = e.target.getLatLng();
+                // Convert to UTM
+                const utm = proj4(wgs84, utm43n, [newLatLng.lng, newLatLng.lat]);
+
+                // Update the point
+                crossSectionPoints[markerIndex].lat = newLatLng.lat;
+                crossSectionPoints[markerIndex].lng = newLatLng.lng;
+                crossSectionPoints[markerIndex].x = utm[0];
+                crossSectionPoints[markerIndex].y = utm[1];
+
+                // Redraw line and regenerate cross-section
+                updateCrossSectionAfterMove();
+            });
+
+            crossSectionMarkers.push(marker);
+
+            // If two points selected, draw line and generate cross-section
+            if (crossSectionPoints.length === 2) {
+                drawCrossSectionLine();
+                generateCrossSection();
+
+                // Exit cross-section mode
+                crossSectionMode = false;
+                crossSectionToggle.classList.remove('active');
+                crossSectionToggle.innerHTML = '📊 Cross Section';
+                map.getContainer().style.cursor = '';
+            }
+        }
+
+        function updateCrossSectionAfterMove() {
+            // Remove old line
+            if (crossSectionLine) {
+                map.removeLayer(crossSectionLine);
+            }
+
+            // Redraw line
+            drawCrossSectionLine();
+
+            // Regenerate cross-section
+            generateCrossSection();
+        }
+
+        function drawCrossSectionLine() {
+            const latlngs = crossSectionPoints.map(p => [p.lat, p.lng]);
+
+            crossSectionLine = L.polyline(latlngs, {
+                color: '#FFA726',
+                weight: 4,
+                opacity: 0.8,
+                dashArray: '10, 10'
+            }).addTo(map);
+        }
+
+        function generateCrossSection() {
+            const p1 = crossSectionPoints[0];
+            const p2 = crossSectionPoints[1];
+
+            // Get all points from selected location
+            const locationPoints = locationGroups[selectedLocation];
+            if (!locationPoints || locationPoints.length === 0) {
+                alert('No points found for location: ' + selectedLocation);
+                return;
+            }
+
+            // Project all points onto line
+            projectedPoints = [];
+
+            locationPoints.forEach(point => {
+                const projected = projectPointOntoLine(point, p1, p2);
+                if (projected.valid) {
+                    projectedPoints.push(projected);
+                }
+            });
+
+            if (projectedPoints.length === 0) {
+                alert('No points found within ' + perpDistanceThreshold + ' meters of the cross-section line');
+                return;
+            }
+
+            // Sort by distance along line
+            projectedPoints.sort((a, b) => a.distanceAlong - b.distanceAlong);
+
+            // Normalize elevations
+            const minElev = Math.min(...projectedPoints.map(p => p.elevation));
+            projectedPoints.forEach(p => {
+                p.originalElevation = p.elevation;
+                p.normalizedElevation = p.elevation - minElev;
+            });
+
+            // Store full list before any filtering for table display
+            window.allProjectedPoints = [...projectedPoints];
+
+            // Calculate line length
+            const lineLength = Math.sqrt(
+                Math.pow(p2.x - p1.x, 2) +
+                Math.pow(p2.y - p1.y, 2)
+            );
+
+            // Update panel info
+            document.getElementById('locationName').textContent = selectedLocation;
+            document.getElementById('sectionLength').textContent = lineLength.toFixed(2);
+            document.getElementById('pointCount').textContent = projectedPoints.length;
+
+            // Render chart
+            renderChart();
+
+            // Populate table
+            populateReadingsTable();
+
+            // Highlight points on map
+            highlightCrossSectionPoints();
+
+            // Show panel
+            crossSectionPanel.style.display = 'block';
+            setTimeout(() => {
+                crossSectionPanel.classList.add('visible');
+            }, 10);
+
+            // Update reference line angle comparison if exists
+            if (referenceLinePoints.length === 2) {
+                updateAngleComparison();
+            }
+        }
+
+        function highlightCrossSectionPoints() {
+            // Remove previous highlights
+            highlightedMarkers.forEach(highlight => map.removeLayer(highlight));
+            highlightedMarkers = [];
+
+            // Highlight each projected point
+            projectedPoints.forEach(point => {
+                // Find the original marker
+                const markerData = allMarkers.find(m =>
+                    m.pointData.name === point.name &&
+                    Math.abs(m.pointData.elev - point.originalElevation) < 0.001
+                );
+
+                if (markerData) {
+                    const markerLatlng = markerData.marker.getLatLng();
+                    const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+
+                    // Check if manually excluded
+                    const isIncluded = manualPointOverrides[pointKey] !== false;
+
+                    // Create highlight circle
+                    const highlightCircle = L.circleMarker(markerLatlng, {
+                        radius: 10,
+                        color: isIncluded ? '#4CAF50' : '#FF5722',
+                        fillColor: isIncluded ? '#4CAF50' : '#FF5722',
+                        fillOpacity: 0.3,
+                        weight: 2,
+                        opacity: 0.8
+                    }).addTo(map);
+
+                    // Add click handler to toggle inclusion
+                    highlightCircle.on('click', function(e) {
+                        L.DomEvent.stopPropagation(e);
+                        togglePointInclusion(pointKey, point);
+                    });
+
+                    // Add tooltip
+                    highlightCircle.bindTooltip(
+                        `${point.name}<br/>` +
+                        `Distance: ${point.distanceAlong.toFixed(2)} m<br/>` +
+                        `Perpendicular: ${point.perpendicularDistance.toFixed(2)} m<br/>` +
+                        `<em>Click to ${isIncluded ? 'exclude' : 'include'}</em>`,
+                        { sticky: true }
+                    );
+
+                    highlightedMarkers.push(highlightCircle);
+                }
+            });
+        }
+
+        function togglePointInclusion(pointKey, point) {
+            // Toggle the inclusion state
+            if (manualPointOverrides[pointKey] === undefined) {
+                // First toggle - exclude it
+                manualPointOverrides[pointKey] = false;
+            } else {
+                // Toggle current state
+                manualPointOverrides[pointKey] = !manualPointOverrides[pointKey];
+            }
+
+            // Update the display
+            updateCrossSectionDisplay();
+        }
+
+        function updateCrossSectionDisplay() {
+            // Filter points based on manual overrides
+            const activePoints = projectedPoints.filter(p => {
+                const pointKey = `${p.name}_${p.originalElevation.toFixed(3)}`;
+                return manualPointOverrides[pointKey] !== false;
+            });
+
+            // Recalculate normalized elevations for active points
+            if (activePoints.length > 0) {
+                const minElev = Math.min(...activePoints.map(p => p.originalElevation));
+                activePoints.forEach(p => {
+                    p.normalizedElevation = p.originalElevation - minElev;
+                });
+            }
+
+            // Update point count
+            document.getElementById('pointCount').textContent = activePoints.length;
+
+            // Temporarily replace projectedPoints for rendering
+            const originalProjectedPoints = projectedPoints;
+            projectedPoints = activePoints;
+
+            // Re-render chart and table
+            renderChart();
+            populateReadingsTable();
+
+            // Restore original
+            projectedPoints = originalProjectedPoints;
+
+            // Update highlights
+            highlightCrossSectionPoints();
+        }
+
+        function projectPointOntoLine(point, lineStart, lineEnd) {
+            const dx = lineEnd.x - lineStart.x;
+            const dy = lineEnd.y - lineStart.y;
+            const lengthSquared = dx * dx + dy * dy;
+
+            // Check for degenerate line
+            if (lengthSquared < 1e-6) {
+                return { valid: false };
+            }
+
+            const px = point.x - lineStart.x;
+            const py = point.y - lineStart.y;
+            const t = (px * dx + py * dy) / lengthSquared;
+
+            // Projected point
+            const projX = lineStart.x + t * dx;
+            const projY = lineStart.y + t * dy;
+
+            // Distances
+            const distanceAlong = t * Math.sqrt(lengthSquared);
+            const perpDist = Math.sqrt(
+                Math.pow(point.x - projX, 2) +
+                Math.pow(point.y - projY, 2)
+            );
+
+            // Validate based on perpendicular distance
+            const valid = perpDist <= perpDistanceThreshold;
+
+            return {
+                valid: valid,
+                name: point.name,
+                originalX: point.x,
+                originalY: point.y,
+                elevation: point.elev,
+                distanceAlong: distanceAlong,
+                perpendicularDistance: perpDist,
+                t: t,
+                position: t < 0 ? 'before' : (t > 1 ? 'after' : 'within')
+            };
+        }
+
+        // Project sensor point onto line - always returns valid projection
+        function projectSensorOntoLine(sensor, lineStart, lineEnd) {
+            const dx = lineEnd.x - lineStart.x;
+            const dy = lineEnd.y - lineStart.y;
+            const lengthSquared = dx * dx + dy * dy;
+            const lineLength = Math.sqrt(lengthSquared);
+
+            // Check for degenerate line
+            if (lengthSquared < 1e-6) {
+                return { distanceAlong: 0, perpendicularDistance: 0 };
+            }
+
+            const px = sensor.x - lineStart.x;
+            const py = sensor.y - lineStart.y;
+            const t = (px * dx + py * dy) / lengthSquared;
+
+            // Projected point on the infinite line
+            const projX = lineStart.x + t * dx;
+            const projY = lineStart.y + t * dy;
+
+            // Distance along the line (can be negative if before start, or > length if after end)
+            const distanceAlong = t * lineLength;
+
+            // Perpendicular distance from sensor to line
+            const perpDist = Math.sqrt(
+                Math.pow(sensor.x - projX, 2) +
+                Math.pow(sensor.y - projY, 2)
+            );
+
+            return {
+                distanceAlong: distanceAlong,
+                perpendicularDistance: perpDist,
+                t: t,
+                projectedX: projX,
+                projectedY: projY
+            };
+        }
+
+        function renderChart() {
+            const ctx = document.getElementById('crossSectionChart').getContext('2d');
+
+            // Destroy existing chart
+            if (currentChart) {
+                currentChart.destroy();
+            }
+
+            // Calculate minimum elevation for normalization
+            const minElev = projectedPoints.length > 0
+                ? Math.min(...projectedPoints.map(p => p.originalElevation))
+                : 0;
+
+            // Prepare DGPS data as {x, y} points for linear scale
+            const dgpsData = projectedPoints.map(p => ({
+                x: p.distanceAlong,
+                y: p.normalizedElevation
+            }));
+
+            // Prepare datasets - use scatter type for proper x positioning
+            const datasets = [{
+                label: 'Cross-Section Profile',
+                data: dgpsData,
+                borderColor: '#2196F3',
+                backgroundColor: 'rgba(33, 150, 243, 0.2)',
+                fill: true,
+                tension: 0.1,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                showLine: true
+            }];
+
+            // Add sensor points if cross-section exists
+            if (crossSectionPoints.length === 2 && sensorPoints.length > 0) {
+                const p1 = crossSectionPoints[0];
+                const p2 = crossSectionPoints[1];
+
+                // Project sensors onto cross-section line
+                const sensorData = [];
+
+                sensorPoints.forEach(sensor => {
+                    const projected = projectSensorOntoLine(sensor, p1, p2);
+                    sensorData.push({
+                        x: projected.distanceAlong,
+                        y: sensor.elev - minElev
+                    });
+                });
+
+                if (sensorData.length > 0) {
+                    // Add sensor dataset
+                    datasets.push({
+                        label: 'Sensors',
+                        data: sensorData,
+                        borderColor: '#FF6B35',
+                        backgroundColor: '#FF6B35',
+                        pointStyle: 'triangle',
+                        pointRadius: 8,
+                        pointHoverRadius: 10,
+                        showLine: false,
+                        type: 'scatter',
+                        // Store sensor info for tooltips
+                        sensorInfo: sensorPoints.map((sensor, idx) => ({
+                            name: sensor.name || 'Custom Sensor',
+                            type: sensor.type,
+                            elev: sensor.elev,
+                            distanceAlong: sensorData[idx].x
+                        }))
+                    });
+                }
+            }
+
+            // Store reference to active points for click handler
+            const activePointsForChart = [...projectedPoints];
+            // Store sensor data for tooltip reference
+            const sensorDataForChart = crossSectionPoints.length === 2 ? sensorPoints.map((sensor) => {
+                const p1 = crossSectionPoints[0];
+                const p2 = crossSectionPoints[1];
+                const projected = projectSensorOntoLine(sensor, p1, p2);
+                return {
+                    name: sensor.name || 'Custom Sensor',
+                    type: sensor.type,
+                    elev: sensor.elev,
+                    distanceAlong: projected.distanceAlong,
+                    normalizedElev: sensor.elev - minElev
+                };
+            }) : [];
+
+            // Create chart - use scatter type for proper linear X axis
+            currentChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2,
+                    onClick: function(event, elements) {
+                        if (elements.length > 0 && elements[0].datasetIndex === 0) {
+                            const index = elements[0].index;
+                            const point = activePointsForChart[index];
+                            if (point) {
+                                highlightTableRow(point);
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    // Check if this is sensor dataset (index 1 when sensors exist)
+                                    if (context.datasetIndex === 1 && sensorDataForChart.length > 0) {
+                                        const sensor = sensorDataForChart[context.dataIndex];
+                                        if (sensor) {
+                                            return [
+                                                `X Position: ${sensor.distanceAlong.toFixed(2)} m`,
+                                                `Elevation: ${sensor.elev.toFixed(3)} m`,
+                                                `Normalized: ${sensor.normalizedElev.toFixed(3)} m`,
+                                                `Type: ${sensor.type}`
+                                            ];
+                                        }
+                                    }
+                                    // DGPS point
+                                    const point = activePointsForChart[context.dataIndex];
+                                    if (!point) return '';
+                                    return [
+                                        `X Position: ${point.distanceAlong.toFixed(2)} m`,
+                                        `Elevation: ${point.originalElevation.toFixed(3)} m`,
+                                        `Normalized: ${point.normalizedElevation.toFixed(3)} m`,
+                                        `Perpendicular: ${point.perpendicularDistance.toFixed(2)} m`
+                                    ];
+                                },
+                                title: function(context) {
+                                    // Check if this is sensor dataset
+                                    if (context[0].datasetIndex === 1 && sensorDataForChart.length > 0) {
+                                        const sensor = sensorDataForChart[context[0].dataIndex];
+                                        if (sensor) {
+                                            return `🔺 ${sensor.name}`;
+                                        }
+                                    }
+                                    const point = activePointsForChart[context[0].dataIndex];
+                                    if (!point) return '';
+                                    return `${point.name} (${point.distanceAlong.toFixed(2)} m from start)`;
+                                }
+                            }
+                        },
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            align: 'start',
+                            labels: {
+                                padding: 15,
+                                boxWidth: 15,
+                                generateLabels: function(chart) {
+                                    return [
+                                        { text: 'Cross-Section Profile', fillStyle: '#2196F3', strokeStyle: '#2196F3', lineWidth: 2 },
+                                        { text: 'Sensor Points', fillStyle: '#FF6B35', strokeStyle: '#FF6B35', pointStyle: 'triangle' }
+                                    ];
+                                }
+                            }
+                        },
+                        // Configure datalabels plugin
+                        datalabels: {
+                            display: function(context) {
+                                // Only show labels for sensor dataset (index 1)
+                                return context.datasetIndex === 1;
+                            },
+                            align: 'top',
+                            anchor: 'end',
+                            offset: 4,
+                            color: '#FF6B35',
+                            font: {
+                                weight: 'bold',
+                                size: 11
+                            },
+                            backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                            borderRadius: 3,
+                            padding: { top: 2, bottom: 2, left: 4, right: 4 },
+                            formatter: function(value, context) {
+                                return `X: ${value.x.toFixed(2)}m`;
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            title: {
+                                display: true,
+                                text: 'Distance from Start (m)'
+                            },
+                            beginAtZero: true
+                        },
+                        y: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Normalized Elevation (m)'
+                            },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Function to highlight a table row when point is selected from chart
+        function highlightTableRow(point) {
+            const tbody = document.getElementById('readingsTableBody');
+            const rows = tbody.getElementsByTagName('tr');
+            const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+
+            // Remove previous highlights
+            for (let row of rows) {
+                row.classList.remove('highlighted');
+            }
+
+            // Find and highlight the matching row
+            for (let row of rows) {
+                if (row.dataset.pointKey === pointKey) {
+                    row.classList.add('highlighted');
+                    // Scroll the row into view
+                    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    break;
+                }
+            }
+
+            // Also highlight on map
+            highlightPointOnMap(point);
+        }
+
+        // Function to highlight point on map when selected from chart or table
+        function highlightPointOnMap(point) {
+            // Find the highlight marker for this point and pulse it
+            const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+            
+            highlightedMarkers.forEach((marker, idx) => {
+                const markerPoint = window.allProjectedPoints[idx];
+                if (markerPoint) {
+                    const markerKey = `${markerPoint.name}_${markerPoint.originalElevation.toFixed(3)}`;
+                    if (markerKey === pointKey) {
+                        // Pulse effect - temporarily increase size
+                        marker.setRadius(15);
+                        setTimeout(() => {
+                            const isIncluded = manualPointOverrides[pointKey] !== false;
+                            marker.setRadius(10);
+                        }, 500);
+                    }
+                }
+            });
+        }
+
+        function populateReadingsTable() {
+            const tbody = document.getElementById('readingsTableBody');
+            tbody.innerHTML = '';
+
+            // Get the full list of projected points (stored globally, not filtered)
+            const allProjectedPoints = window.allProjectedPoints || projectedPoints;
+
+            // Calculate minimum elevation for normalization (from active points only)
+            const activePoints = allProjectedPoints.filter(p => {
+                const pointKey = `${p.name}_${p.originalElevation.toFixed(3)}`;
+                return manualPointOverrides[pointKey] !== false;
+            });
+
+            const minElev = activePoints.length > 0
+                ? Math.min(...activePoints.map(p => p.originalElevation))
+                : (allProjectedPoints.length > 0 ? Math.min(...allProjectedPoints.map(p => p.originalElevation)) : 0);
+
+            // Add DGPS points (show ALL points, not just active ones)
+            allProjectedPoints.forEach((point, index) => {
+                const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+                const isIncluded = manualPointOverrides[pointKey] !== false;
+
+                const row = tbody.insertRow();
+                row.dataset.pointKey = pointKey;  // Store point key for lookup
+                row.dataset.pointIndex = index;
+
+                // Checkbox column
+                const checkboxCell = row.insertCell(0);
+                checkboxCell.style.textAlign = 'center';
+                checkboxCell.innerHTML = `<input type="checkbox" ${isIncluded ? 'checked' : ''}
+                    onchange="event.stopPropagation(); togglePointFromTable('${pointKey}')"
+                    style="cursor: pointer; width: 14px; height: 14px;">`;
+
+                // Apply styling for excluded points
+                if (!isIncluded) {
+                    row.classList.add('disabled-point');
+                }
+
+                // Add click handler to highlight on chart and map
+                row.onclick = function(e) {
+                    if (e.target.type !== 'checkbox') {
+                        selectPointFromTable(point, index);
+                    }
+                };
+
+                row.insertCell(1).textContent = point.name;
+                row.insertCell(2).textContent = point.distanceAlong.toFixed(2);
+                row.insertCell(3).textContent = point.originalElevation.toFixed(3);
+                row.insertCell(4).textContent = (point.originalElevation - minElev).toFixed(3);
+                row.insertCell(5).textContent = 'DGPS';  // Type
+                row.insertCell(6).textContent = point.originalX ? point.originalX.toFixed(3) : '-';  // UTM X
+                row.insertCell(7).textContent = point.originalY ? point.originalY.toFixed(3) : '-';  // UTM Y
+            });
+
+            // Add sensor points
+            if (crossSectionPoints.length === 2 && sensorPoints.length > 0) {
+                const p1 = crossSectionPoints[0];
+                const p2 = crossSectionPoints[1];
+
+                sensorPoints.forEach((sensor, idx) => {
+                    const projected = projectSensorOntoLine(sensor, p1, p2);
+                    const row = tbody.insertRow();
+                    const sensorName = sensor.type === 'existing' ? sensor.name : 'Custom Sensor';
+
+                    // Checkbox column (empty for sensors - they can't be toggled)
+                    const checkboxCell = row.insertCell(0);
+                    checkboxCell.style.textAlign = 'center';
+                    checkboxCell.innerHTML = `<span style="color: #FF6B35;">🔺</span>`;
+
+                    row.insertCell(1).innerHTML = `<strong style="color: #FF6B35;">${sensorName}</strong>`;
+                    row.insertCell(2).textContent = projected.distanceAlong.toFixed(2);
+                    row.insertCell(3).textContent = sensor.elev.toFixed(3);
+                    row.insertCell(4).textContent = (sensor.elev - minElev).toFixed(3);
+                    row.insertCell(5).textContent = 'Sensor';
+                    row.insertCell(6).textContent = sensor.x.toFixed(3);
+                    row.insertCell(7).textContent = sensor.y.toFixed(3);
+
+                    // Highlight sensor rows
+                    row.style.backgroundColor = 'rgba(255, 107, 53, 0.1)';
+                });
+            }
+        }
+
+        // Global function for toggling points from table checkboxes
+        window.togglePointFromTable = function(pointKey) {
+            // Toggle the point
+            if (manualPointOverrides[pointKey] === undefined) {
+                manualPointOverrides[pointKey] = false;
+            } else {
+                manualPointOverrides[pointKey] = !manualPointOverrides[pointKey];
+            }
+
+            // Update all displays (chart, table, map)
+            updateCrossSectionDisplay();
+        };
+
+        // Function to select a point from table and highlight on chart and map
+        function selectPointFromTable(point, index) {
+            const tbody = document.getElementById('readingsTableBody');
+            const rows = tbody.getElementsByTagName('tr');
+            const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+
+            // Remove previous highlights from table
+            for (let row of rows) {
+                row.classList.remove('highlighted');
+            }
+
+            // Highlight clicked row
+            for (let row of rows) {
+                if (row.dataset.pointKey === pointKey) {
+                    row.classList.add('highlighted');
+                    break;
+                }
+            }
+
+            // Highlight on map
+            highlightPointOnMap(point);
+
+            // Highlight on chart - find the point index in active points
+            const isIncluded = manualPointOverrides[pointKey] !== false;
+            if (isIncluded && currentChart) {
+                const activePoints = (window.allProjectedPoints || []).filter(p => {
+                    const pKey = `${p.name}_${p.originalElevation.toFixed(3)}`;
+                    return manualPointOverrides[pKey] !== false;
+                });
+                
+                const chartIndex = activePoints.findIndex(p => 
+                    p.name === point.name && 
+                    Math.abs(p.originalElevation - point.originalElevation) < 0.001
+                );
+
+                if (chartIndex >= 0) {
+                    // Highlight point on chart
+                    currentChart.setActiveElements([{
+                        datasetIndex: 0,
+                        index: chartIndex
+                    }]);
+                    currentChart.update();
+                }
+            }
+        }
+
+        // ===== SENSOR POINT ADDITION FUNCTIONALITY =====
+
+        let sensorAddMode = false;
+        let pendingElevationData = null;
+
+        addSensorBtn.addEventListener('click', function() {
+            sensorAddMode = !sensorAddMode;
+            if (sensorAddMode) {
+                this.classList.add('active');
+                this.innerHTML = '📍 Click to Add...';
+                map.getContainer().style.cursor = 'crosshair';
+
+                // Close all popups and disable popup opening
+                map.closePopup();
+                allMarkers.forEach(markerData => {
+                    markerData.marker.closePopup();
+                    markerData.marker.unbindPopup();
+                });
+            } else {
+                this.classList.remove('active');
+                this.innerHTML = '📍 Add Sensor';
+                map.getContainer().style.cursor = '';
+
+                // Re-enable popups (only if not in cross-section mode)
+                if (!crossSectionMode) {
+                    allMarkers.forEach(markerData => {
+                        const p = markerData.pointData;
+                        const locationName = markerData.locationName;
+                        const markerLatlng = markerData.marker.getLatLng();
+
+                        markerData.marker.bindPopup(`
+                            <strong>${locationName.replace(/_/g, ' ')}</strong><br/>
+                            <strong>Point:</strong> ${p.name}<br/>
+                            <strong>Elevation:</strong> ${p.elev} m<br/>
+                            <strong>Coordinates:</strong><br/>
+                            Northing: ${p.y.toFixed(3)} m<br/>
+                            Easting: ${p.x.toFixed(3)} m<br/>
+                            Lat/Lon: ${markerLatlng.lat.toFixed(6)}°, ${markerLatlng.lng.toFixed(6)}°
+                        `);
+                    });
+                }
+            }
+        });
+
+        // Sensor addition via map click
+        map.on('click', function(e) {
+            if (!sensorAddMode || crossSectionMode) return;
+
+            const latlng = e.latlng;
+            
+            // Always use the actual clicked location coordinates
+            // Convert clicked lat/lng to UTM for x, y
+            const utm = proj4(wgs84, utm43n, [latlng.lng, latlng.lat]);
+            const clickedX = utm[0];
+            const clickedY = utm[1];
+            
+            // Check if there's a nearby marker to get elevation and name from
+            let clickedMarkerData = findMarkerAtLocation(latlng);
+
+            if (clickedMarkerData) {
+                // Method A: Use elevation and name from nearby point, but actual clicked coordinates
+                addSensorPoint({
+                    name: clickedMarkerData.pointData.name,
+                    x: clickedX,  // Use actual clicked UTM coordinates
+                    y: clickedY,  // Use actual clicked UTM coordinates
+                    elev: clickedMarkerData.pointData.elev,
+                    lat: latlng.lat,
+                    lon: latlng.lng,
+                    location: clickedMarkerData.locationName,
+                    type: 'existing'
+                });
+            } else {
+                // Method B: Custom location - prompt for elevation
+                promptForElevation(clickedX, clickedY, latlng.lat, latlng.lng);
+            }
+        });
+
+        function promptForElevation(x, y, lat, lon) {
+            pendingElevationData = { x, y, lat, lon };
+            document.getElementById('modalLatLon').textContent = `${lat.toFixed(6)}°, ${lon.toFixed(6)}°`;
+            document.getElementById('elevationModal').style.display = 'flex';
+        }
+
+        document.getElementById('confirmElevation').addEventListener('click', function() {
+            const elev = parseFloat(document.getElementById('customElevation').value);
+            if (isNaN(elev)) {
+                alert('Please enter a valid elevation value');
+                return;
+            }
+
+            addSensorPoint({
+                name: 'Custom Sensor Point',
+                x: pendingElevationData.x,
+                y: pendingElevationData.y,
+                elev: elev,
+                lat: pendingElevationData.lat,
+                lon: pendingElevationData.lon,
+                location: selectedLocation || 'Custom',
+                type: 'custom'
+            });
+
+            document.getElementById('elevationModal').style.display = 'none';
+            document.getElementById('customElevation').value = '';
+            pendingElevationData = null;
+        });
+
+        document.getElementById('cancelElevation').addEventListener('click', function() {
+            document.getElementById('elevationModal').style.display = 'none';
+            document.getElementById('customElevation').value = '';
+            pendingElevationData = null;
+
+            // Exit sensor add mode and re-enable popups
+            sensorAddMode = false;
+            addSensorBtn.classList.remove('active');
+            addSensorBtn.innerHTML = '📍 Add Sensor';
+            map.getContainer().style.cursor = '';
+
+            // Re-enable popups (only if not in cross-section mode)
+            if (!crossSectionMode) {
+                allMarkers.forEach(markerData => {
+                    const p = markerData.pointData;
+                    const locationName = markerData.locationName;
+                    const markerLatlng = markerData.marker.getLatLng();
+
+                    markerData.marker.bindPopup(`
+                        <strong>${locationName.replace(/_/g, ' ')}</strong><br/>
+                        <strong>Point:</strong> ${p.name}<br/>
+                        <strong>Elevation:</strong> ${p.elev} m<br/>
+                        <strong>Coordinates:</strong><br/>
+                        Northing: ${p.y.toFixed(3)} m<br/>
+                        Easting: ${p.x.toFixed(3)} m<br/>
+                        Lat/Lon: ${markerLatlng.lat.toFixed(6)}°, ${markerLatlng.lng.toFixed(6)}°
+                    `);
+                });
+            }
+        });
+
+        function addSensorPoint(sensorData) {
+            sensorPoints.push(sensorData);
+
+            // Create sensor item HTML
+            const sensorItem = document.createElement('div');
+            sensorItem.className = 'sensor-item';
+            const sensorIndex = sensorPoints.length - 1;
+
+            sensorItem.innerHTML = `
+                <div class="sensor-header">
+                    <strong>${sensorData.type === 'existing' ? sensorData.name : 'Custom Point'}</strong>
+                    <div>
+                        <button class="edit-sensor" onclick="editSensorElevation(${sensorIndex})">✏️ Edit Elev</button>
+                        <button class="remove-sensor" onclick="removeSensor(${sensorIndex})">×</button>
+                    </div>
+                </div>
+                <div class="sensor-coords">
+                    <div>Lat: ${sensorData.lat.toFixed(6)}°</div>
+                    <div>Lon: ${sensorData.lon.toFixed(6)}°</div>
+                    <div>UTM X: ${sensorData.x.toFixed(3)} m</div>
+                    <div>UTM Y: ${sensorData.y.toFixed(3)} m</div>
+                    <div class="sensor-elev-display" id="sensor-elev-${sensorIndex}">
+                        <strong>Elevation: <span class="elev-value">${sensorData.elev.toFixed(3)}</span> m</strong>
+                    </div>
+                    ${sensorData.location ? `<div style="grid-column: 1 / -1;">Location: ${sensorData.location}</div>` : ''}
+                </div>
+            `;
+
+            document.getElementById('sensorList').appendChild(sensorItem);
+
+            // Add marker on map
+            const sensorMarker = L.circleMarker([sensorData.lat, sensorData.lon], {
+                radius: 8,
+                color: '#FF6B35',
+                fillColor: '#FF6B35',
+                fillOpacity: 0.8,
+                weight: 2
+            }).addTo(map);
+
+            sensorMarker.bindPopup(`
+                <strong>Sensor Mounting Point</strong><br/>
+                ${sensorData.type === 'existing' ? sensorData.name + '<br/>' : ''}
+                Elevation: ${sensorData.elev.toFixed(3)} m<br/>
+                Lat: ${sensorData.lat.toFixed(6)}°<br/>
+                Lon: ${sensorData.lon.toFixed(6)}°
+            `);
+
+            sensorMarkers.push(sensorMarker);
+
+            // Exit sensor add mode
+            sensorAddMode = false;
+            addSensorBtn.classList.remove('active');
+            addSensorBtn.innerHTML = '📍 Add Sensor';
+            map.getContainer().style.cursor = '';
+
+            // Re-enable popups (only if not in cross-section mode)
+            if (!crossSectionMode) {
+                allMarkers.forEach(markerData => {
+                    const p = markerData.pointData;
+                    const locationName = markerData.locationName;
+                    const markerLatlng = markerData.marker.getLatLng();
+
+                    markerData.marker.bindPopup(`
+                        <strong>${locationName.replace(/_/g, ' ')}</strong><br/>
+                        <strong>Point:</strong> ${p.name}<br/>
+                        <strong>Elevation:</strong> ${p.elev} m<br/>
+                        <strong>Coordinates:</strong><br/>
+                        Northing: ${p.y.toFixed(3)} m<br/>
+                        Easting: ${p.x.toFixed(3)} m<br/>
+                        Lat/Lon: ${markerLatlng.lat.toFixed(6)}°, ${markerLatlng.lng.toFixed(6)}°
+                    `);
+                });
+            }
+
+            // Update chart and table if cross-section exists
+            if (crossSectionPoints.length === 2) {
+                renderChart();
+                populateReadingsTable();
+            }
+
+            // Show panel if not visible
+            if (!crossSectionPanel.classList.contains('visible')) {
+                crossSectionPanel.style.display = 'block';
+                setTimeout(() => {
+                    crossSectionPanel.classList.add('visible');
+                }, 10);
+            }
+        }
+
+        // Global function to remove sensor
+        window.removeSensor = function(index) {
+            if (index < 0 || index >= sensorPoints.length) return;
+
+            // Remove from array
+            sensorPoints.splice(index, 1);
+
+            // Remove marker
+            if (sensorMarkers[index]) {
+                map.removeLayer(sensorMarkers[index]);
+                sensorMarkers.splice(index, 1);
+            }
+
+            // Rebuild sensor list HTML
+            const sensorList = document.getElementById('sensorList');
+            sensorList.innerHTML = '';
+
+            sensorPoints.forEach((sensor, i) => {
+                const sensorItem = document.createElement('div');
+                sensorItem.className = 'sensor-item';
+
+                sensorItem.innerHTML = `
+                    <div class="sensor-header">
+                        <strong>${sensor.type === 'existing' ? sensor.name : 'Custom Point'}</strong>
+                        <div>
+                            <button class="edit-sensor" onclick="editSensorElevation(${i})">✏️ Edit Elev</button>
+                            <button class="remove-sensor" onclick="removeSensor(${i})">×</button>
+                        </div>
+                    </div>
+                    <div class="sensor-coords">
+                        <div>Lat: ${sensor.lat.toFixed(6)}°</div>
+                        <div>Lon: ${sensor.lon.toFixed(6)}°</div>
+                        <div>UTM X: ${sensor.x.toFixed(3)} m</div>
+                        <div>UTM Y: ${sensor.y.toFixed(3)} m</div>
+                        <div class="sensor-elev-display" id="sensor-elev-${i}">
+                            <strong>Elevation: <span class="elev-value">${sensor.elev.toFixed(3)}</span> m</strong>
+                        </div>
+                        ${sensor.location ? `<div style="grid-column: 1 / -1;">Location: ${sensor.location}</div>` : ''}
+                    </div>
+                `;
+
+                sensorList.appendChild(sensorItem);
+            });
+
+            // Update chart and table if cross-section exists
+            if (crossSectionPoints.length === 2) {
+                renderChart();
+                populateReadingsTable();
+            }
+        };
+
+        // Global function to edit sensor elevation
+        window.editSensorElevation = function(index) {
+            if (index < 0 || index >= sensorPoints.length) return;
+
+            const sensor = sensorPoints[index];
+            const elevContainer = document.getElementById(`sensor-elev-${index}`);
+            
+            if (!elevContainer) return;
+
+            // Check if already in edit mode
+            if (elevContainer.querySelector('.sensor-elev-input')) {
+                return; // Already editing
+            }
+
+            const currentElev = sensor.elev;
+
+            // Replace display with input
+            elevContainer.innerHTML = `
+                <input type="number" class="sensor-elev-input" id="sensor-elev-input-${index}" 
+                       value="${currentElev.toFixed(3)}" step="0.001" placeholder="Elevation">
+                <button class="edit-sensor" onclick="saveSensorElevation(${index})" style="background: #4CAF50;">✓ Save</button>
+                <button class="edit-sensor" onclick="cancelEditElevation(${index}, ${currentElev})" style="background: #757575;">✗ Cancel</button>
+            `;
+
+            // Focus the input
+            const input = document.getElementById(`sensor-elev-input-${index}`);
+            if (input) {
+                input.focus();
+                input.select();
+
+                // Allow Enter key to save
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        saveSensorElevation(index);
+                    } else if (e.key === 'Escape') {
+                        cancelEditElevation(index, currentElev);
+                    }
+                });
+            }
+        };
+
+        // Global function to save sensor elevation
+        window.saveSensorElevation = function(index) {
+            if (index < 0 || index >= sensorPoints.length) return;
+
+            const input = document.getElementById(`sensor-elev-input-${index}`);
+            if (!input) return;
+
+            const newElev = parseFloat(input.value);
+            if (isNaN(newElev)) {
+                alert('Please enter a valid elevation value');
+                return;
+            }
+
+            // Update sensor elevation
+            sensorPoints[index].elev = newElev;
+
+            // Update display
+            const elevContainer = document.getElementById(`sensor-elev-${index}`);
+            if (elevContainer) {
+                elevContainer.innerHTML = `
+                    <strong>Elevation: <span class="elev-value">${newElev.toFixed(3)}</span> m</strong>
+                `;
+            }
+
+            // Update marker popup
+            if (sensorMarkers[index]) {
+                const sensor = sensorPoints[index];
+                sensorMarkers[index].setPopupContent(`
+                    <strong>Sensor Mounting Point</strong><br/>
+                    ${sensor.type === 'existing' ? sensor.name + '<br/>' : ''}
+                    Elevation: ${sensor.elev.toFixed(3)} m<br/>
+                    Lat: ${sensor.lat.toFixed(6)}°<br/>
+                    Lon: ${sensor.lon.toFixed(6)}°
+                `);
+            }
+
+            // Update chart and table if cross-section exists
+            if (crossSectionPoints.length === 2) {
+                renderChart();
+                populateReadingsTable();
+            }
+        };
+
+        // Global function to cancel elevation edit
+        window.cancelEditElevation = function(index, originalElev) {
+            const elevContainer = document.getElementById(`sensor-elev-${index}`);
+            if (elevContainer) {
+                elevContainer.innerHTML = `
+                    <strong>Elevation: <span class="elev-value">${originalElev.toFixed(3)}</span> m</strong>
+                `;
+            }
+        };
+
+        // ===== EXPORT/IMPORT FUNCTIONALITY =====
+
+        // Export profile to JSON
+        function exportProfile() {
+            if (crossSectionPoints.length < 2) {
+                alert('No cross-section profile to export. Please create a cross-section first.');
+                return;
+            }
+
+            const profileData = {
+                version: '1.2',
+                exportDate: new Date().toISOString(),
+                location: selectedLocation,
+                perpDistanceThreshold: perpDistanceThreshold,
+                crossSectionLine: {
+                    start: crossSectionPoints[0],
+                    end: crossSectionPoints[1]
+                },
+                projectedPoints: window.allProjectedPoints || projectedPoints,
+                manualPointOverrides: manualPointOverrides,
+                sensorPoints: sensorPoints,
+                imageOffset: {
+                    x: imageOffsetX,
+                    y: imageOffsetY
+                },
+                referenceLine: referenceLinePoints.length === 2 ? {
+                    start: referenceLinePoints[0],
+                    end: referenceLinePoints[1]
+                } : null
+            };
+
+            const jsonStr = JSON.stringify(profileData, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `cross_section_${selectedLocation.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        // Import profile from JSON
+        function importProfile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const profileData = JSON.parse(e.target.result);
+
+                    // Validate profile data
+                    if (!profileData.crossSectionLine || !profileData.location) {
+                        throw new Error('Invalid profile file format');
+                    }
+
+                    // Clear existing cross-section
+                    clearCrossSection();
+
+                    // Restore state
+                    selectedLocation = profileData.location;
+                    perpDistanceThreshold = profileData.perpDistanceThreshold || 3.0;
+                    document.getElementById('perpDistanceInput').value = perpDistanceThreshold;
+                    document.getElementById('currentPerpDist').textContent = perpDistanceThreshold.toFixed(1);
+
+                    // Restore cross-section points
+                    crossSectionPoints = [
+                        profileData.crossSectionLine.start,
+                        profileData.crossSectionLine.end
+                    ];
+
+                    // Add markers for cross-section points
+                    crossSectionPoints.forEach((point, idx) => {
+                        const marker = L.marker([point.lat, point.lng], {
+                            draggable: true,
+                            icon: L.divIcon({
+                                className: 'cross-section-marker',
+                                html: `<div style="background: #FFA726; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+                                iconSize: [16, 16],
+                                iconAnchor: [8, 8]
+                            })
+                        }).addTo(map);
+
+                        marker.bindTooltip(idx === 0 ? 'Start (drag to move)' : 'End (drag to move)', {
+                            permanent: true,
+                            direction: 'top',
+                            className: 'elev-label',
+                            offset: [0, -10]
+                        });
+
+                        const markerIndex = idx;
+                        marker.on('dragend', function(e) {
+                            const newLatLng = e.target.getLatLng();
+                            const utm = proj4(wgs84, utm43n, [newLatLng.lng, newLatLng.lat]);
+                            crossSectionPoints[markerIndex].lat = newLatLng.lat;
+                            crossSectionPoints[markerIndex].lng = newLatLng.lng;
+                            crossSectionPoints[markerIndex].x = utm[0];
+                            crossSectionPoints[markerIndex].y = utm[1];
+                            updateCrossSectionAfterMove();
+                        });
+
+                        crossSectionMarkers.push(marker);
+                    });
+
+                    // Draw cross-section line
+                    drawCrossSectionLine();
+
+                    // Restore manual overrides
+                    manualPointOverrides = profileData.manualPointOverrides || {};
+
+                    // Restore sensor points
+                    if (profileData.sensorPoints && profileData.sensorPoints.length > 0) {
+                        profileData.sensorPoints.forEach(sensor => {
+                            addSensorPoint(sensor);
+                        });
+                    }
+
+                    // Generate cross-section
+                    generateCrossSection();
+
+                    // Restore image offset if present
+                    if (profileData.imageOffset) {
+                        imageOffsetX = profileData.imageOffset.x || 0;
+                        imageOffsetY = profileData.imageOffset.y || 0;
+                        offsetXInput.value = imageOffsetX.toFixed(1);
+                        offsetYInput.value = imageOffsetY.toFixed(1);
+                        
+                        // Apply the offset after a short delay to let map settle
+                        setTimeout(() => {
+                            applyImageOffset(imageOffsetX, imageOffsetY);
+                        }, 100);
+                    }
+
+                    // Restore reference line if present
+                    if (profileData.referenceLine) {
+                        clearReferenceLine();
+                        referenceLinePoints = [profileData.referenceLine.start, profileData.referenceLine.end];
+                        
+                        // Add draggable markers for reference line using L.marker with divIcon
+                        referenceLinePoints.forEach((point, idx) => {
+                            const markerColor = idx === 0 ? '#FF9800' : '#E65100';
+                            
+                            const icon = L.divIcon({
+                                className: 'ref-marker-icon',
+                                html: `<div style="width: 16px; height: 16px; background: ${markerColor}; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                                iconSize: [16, 16],
+                                iconAnchor: [8, 8]
+                            });
+                            
+                            const marker = L.marker([point.lat, point.lng], {
+                                icon: icon,
+                                draggable: true
+                            }).addTo(map);
+                            
+                            marker.bindTooltip(`Ref Point ${idx + 1}`, {
+                                permanent: true,
+                                direction: 'top',
+                                offset: [0, -10]
+                            });
+
+                            const markerIndex = idx;
+                            marker.on('drag', function(e) {
+                                updateReferenceLineOnDrag();
+                            });
+                            marker.on('dragend', function(e) {
+                                const newLatLng = e.target.getLatLng();
+                                const utm = proj4(wgs84, utm43n, [newLatLng.lng, newLatLng.lat]);
+                                referenceLinePoints[markerIndex].lat = newLatLng.lat;
+                                referenceLinePoints[markerIndex].lng = newLatLng.lng;
+                                referenceLinePoints[markerIndex].x = utm[0];
+                                referenceLinePoints[markerIndex].y = utm[1];
+                                updateAngleComparison();
+                            });
+                            
+                            referenceLineMarkers.push(marker);
+                        });
+
+                        drawReferenceLine();
+                    }
+
+                    // Fit map to cross-section
+                    const bounds = L.latLngBounds([
+                        [crossSectionPoints[0].lat, crossSectionPoints[0].lng],
+                        [crossSectionPoints[1].lat, crossSectionPoints[1].lng]
+                    ]);
+                    map.fitBounds(bounds.pad(0.3));
+
+                    const offsetInfo = profileData.imageOffset && (profileData.imageOffset.x !== 0 || profileData.imageOffset.y !== 0)
+                        ? `\nImage Offset: X=${imageOffsetX.toFixed(1)}m, Y=${imageOffsetY.toFixed(1)}m`
+                        : '';
+                    const refLineInfo = profileData.referenceLine ? '\nReference line: Restored' : '';
+                    alert(`Profile imported successfully!\nLocation: ${selectedLocation}\nPoints: ${(window.allProjectedPoints || []).length}${offsetInfo}${refLineInfo}`);
+
+                } catch (error) {
+                    console.error('Import error:', error);
+                    alert('Error importing profile: ' + error.message);
+                }
+            };
+
+            reader.readAsText(file);
+            event.target.value = ''; // Reset file input
+        }
+
+        // Export to PDF
+        async function exportToPDF() {
+            if (crossSectionPoints.length < 2) {
+                alert('No cross-section profile to export. Please create a cross-section first.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('landscape', 'mm', 'a4');
+
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const margin = 15;
+
+            // Title
+            doc.setFontSize(18);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Cross Section Profile Report', pageWidth / 2, margin, { align: 'center' });
+
+            // Location and Date
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Location: ${selectedLocation}`, margin, margin + 10);
+            doc.text(`Date: ${new Date().toLocaleDateString()}`, pageWidth - margin, margin + 10, { align: 'right' });
+
+            // Profile Info
+            doc.setFontSize(10);
+            const lineLength = Math.sqrt(
+                Math.pow(crossSectionPoints[1].x - crossSectionPoints[0].x, 2) +
+                Math.pow(crossSectionPoints[1].y - crossSectionPoints[0].y, 2)
+            );
+
+            const activePoints = (window.allProjectedPoints || []).filter(p => {
+                const pointKey = `${p.name}_${p.originalElevation.toFixed(3)}`;
+                return manualPointOverrides[pointKey] !== false;
+            });
+
+            doc.text(`Section Length: ${lineLength.toFixed(2)} m`, margin, margin + 18);
+            doc.text(`Active Points: ${activePoints.length}`, margin + 80, margin + 18);
+            doc.text(`Perpendicular Distance: ${perpDistanceThreshold} m`, margin + 160, margin + 18);
+
+            // Cross-section line coordinates
+            doc.text(`Start: UTM ${crossSectionPoints[0].x.toFixed(3)} E, ${crossSectionPoints[0].y.toFixed(3)} N`, margin, margin + 25);
+            doc.text(`End: UTM ${crossSectionPoints[1].x.toFixed(3)} E, ${crossSectionPoints[1].y.toFixed(3)} N`, margin + 120, margin + 25);
+
+            // Capture chart as image
+            try {
+                const chartCanvas = document.getElementById('crossSectionChart');
+                const chartImage = chartCanvas.toDataURL('image/png', 1.0);
+                doc.addImage(chartImage, 'PNG', margin, margin + 32, pageWidth - 2 * margin, 70);
+            } catch (e) {
+                console.error('Error capturing chart:', e);
+            }
+
+            // Table data
+            const tableData = activePoints.map((point, idx) => {
+                const minElev = Math.min(...activePoints.map(p => p.originalElevation));
+                return [
+                    idx + 1,
+                    point.name,
+                    point.distanceAlong.toFixed(2),
+                    point.originalElevation.toFixed(3),
+                    (point.originalElevation - minElev).toFixed(3),
+                    point.originalX ? point.originalX.toFixed(3) : '-',
+                    point.originalY ? point.originalY.toFixed(3) : '-'
+                ];
+            });
+
+            // Add sensor points to table
+            if (sensorPoints.length > 0) {
+                const minElev = activePoints.length > 0 ? Math.min(...activePoints.map(p => p.originalElevation)) : 0;
+                sensorPoints.forEach((sensor, idx) => {
+                    const projected = projectSensorOntoLine(
+                        sensor,
+                        crossSectionPoints[0],
+                        crossSectionPoints[1]
+                    );
+                    tableData.push([
+                        'S' + (idx + 1),
+                        sensor.name || 'Custom Sensor',
+                        projected.distanceAlong.toFixed(2),
+                        sensor.elev.toFixed(3),
+                        (sensor.elev - minElev).toFixed(3),
+                        sensor.x.toFixed(3),
+                        sensor.y.toFixed(3)
+                    ]);
+                });
+            }
+
+            // Add table
+            doc.autoTable({
+                startY: margin + 105,
+                head: [['#', 'Point Name', 'Distance (m)', 'Elevation (m)', 'Normalized (m)', 'UTM X (m)', 'UTM Y (m)']],
+                body: tableData,
+                theme: 'grid',
+                styles: { fontSize: 8, cellPadding: 1.5 },
+                headStyles: { fillColor: [33, 150, 243], textColor: 255 },
+                alternateRowStyles: { fillColor: [245, 245, 245] },
+                margin: { left: margin, right: margin }
+            });
+
+            // Footer
+            const finalY = doc.lastAutoTable.finalY || pageHeight - 10;
+            doc.setFontSize(8);
+            doc.text(`Generated by DGPS Survey Tool - ${new Date().toLocaleString()}`, pageWidth / 2, Math.min(finalY + 10, pageHeight - 5), { align: 'center' });
+
+            // Save PDF
+            doc.save(`cross_section_${selectedLocation.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+        }
+
+        // Export to Excel
+        function exportToExcel() {
+            if (crossSectionPoints.length < 2) {
+                alert('No cross-section profile to export. Please create a cross-section first.');
+                return;
+            }
+
+            const activePoints = (window.allProjectedPoints || []).filter(p => {
+                const pointKey = `${p.name}_${p.originalElevation.toFixed(3)}`;
+                return manualPointOverrides[pointKey] !== false;
+            });
+
+            const minElev = activePoints.length > 0 ? Math.min(...activePoints.map(p => p.originalElevation)) : 0;
+            const lineLength = Math.sqrt(
+                Math.pow(crossSectionPoints[1].x - crossSectionPoints[0].x, 2) +
+                Math.pow(crossSectionPoints[1].y - crossSectionPoints[0].y, 2)
+            );
+
+            // Create workbook
+            const wb = XLSX.utils.book_new();
+
+            // Sheet 1: Profile Summary
+            const summaryData = [
+                ['CROSS SECTION PROFILE REPORT'],
+                [],
+                ['Location', selectedLocation],
+                ['Export Date', new Date().toLocaleString()],
+                ['Section Length (m)', lineLength.toFixed(2)],
+                ['Active Points', activePoints.length],
+                ['Perpendicular Distance Threshold (m)', perpDistanceThreshold],
+                [],
+                ['CROSS-SECTION LINE'],
+                ['', 'Latitude', 'Longitude', 'UTM X (Easting)', 'UTM Y (Northing)'],
+                ['Start Point', crossSectionPoints[0].lat.toFixed(6), crossSectionPoints[0].lng.toFixed(6), crossSectionPoints[0].x.toFixed(3), crossSectionPoints[0].y.toFixed(3)],
+                ['End Point', crossSectionPoints[1].lat.toFixed(6), crossSectionPoints[1].lng.toFixed(6), crossSectionPoints[1].x.toFixed(3), crossSectionPoints[1].y.toFixed(3)]
+            ];
+
+            const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+            summarySheet['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 15 }, { wch: 18 }, { wch: 18 }];
+            XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
+
+            // Sheet 2: DGPS Points
+            const pointsData = [
+                ['#', 'Point Name', 'Distance from Start (m)', 'Original Elevation (m)', 'Normalized Elevation (m)', 'Perpendicular Dist (m)', 'UTM X - Easting (m)', 'UTM Y - Northing (m)', 'Status']
+            ];
+
+            const allPoints = window.allProjectedPoints || [];
+            allPoints.forEach((point, idx) => {
+                const pointKey = `${point.name}_${point.originalElevation.toFixed(3)}`;
+                const isIncluded = manualPointOverrides[pointKey] !== false;
+                pointsData.push([
+                    idx + 1,
+                    point.name,
+                    point.distanceAlong.toFixed(3),
+                    point.originalElevation.toFixed(3),
+                    (point.originalElevation - minElev).toFixed(3),
+                    point.perpendicularDistance.toFixed(3),
+                    point.originalX ? point.originalX.toFixed(3) : '',
+                    point.originalY ? point.originalY.toFixed(3) : '',
+                    isIncluded ? 'Active' : 'Excluded'
+                ]);
+            });
+
+            const pointsSheet = XLSX.utils.aoa_to_sheet(pointsData);
+            pointsSheet['!cols'] = [
+                { wch: 5 }, { wch: 25 }, { wch: 20 }, { wch: 18 }, { wch: 20 },
+                { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 10 }
+            ];
+            XLSX.utils.book_append_sheet(wb, pointsSheet, 'DGPS Points');
+
+            // Sheet 3: Sensor Points (if any)
+            if (sensorPoints.length > 0) {
+                const sensorData = [
+                    ['#', 'Sensor Name', 'Type', 'Distance from Start (m)', 'Elevation (m)', 'Normalized (m)', 'Latitude', 'Longitude', 'UTM X (m)', 'UTM Y (m)', 'Location']
+                ];
+
+                sensorPoints.forEach((sensor, idx) => {
+                    const projected = projectSensorOntoLine(
+                        sensor,
+                        crossSectionPoints[0],
+                        crossSectionPoints[1]
+                    );
+
+                    sensorData.push([
+                        idx + 1,
+                        sensor.name || 'Custom Sensor',
+                        sensor.type,
+                        projected.distanceAlong.toFixed(3),
+                        sensor.elev.toFixed(3),
+                        (sensor.elev - minElev).toFixed(3),
+                        sensor.lat.toFixed(6),
+                        sensor.lon.toFixed(6),
+                        sensor.x.toFixed(3),
+                        sensor.y.toFixed(3),
+                        sensor.location || ''
+                    ]);
+                });
+
+                const sensorSheet = XLSX.utils.aoa_to_sheet(sensorData);
+                sensorSheet['!cols'] = [
+                    { wch: 5 }, { wch: 20 }, { wch: 10 }, { wch: 20 }, { wch: 12 },
+                    { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 20 }
+                ];
+                XLSX.utils.book_append_sheet(wb, sensorSheet, 'Sensor Points');
+            }
+
+            // Sheet 4: Chart Data (for recreating chart)
+            const chartData = [
+                ['Distance from Start (m)', 'Normalized Elevation (m)', 'Original Elevation (m)', 'Point Name']
+            ];
+
+            activePoints.forEach(point => {
+                chartData.push([
+                    point.distanceAlong.toFixed(3),
+                    (point.originalElevation - minElev).toFixed(3),
+                    point.originalElevation.toFixed(3),
+                    point.name
+                ]);
+            });
+
+            const chartSheet = XLSX.utils.aoa_to_sheet(chartData);
+            chartSheet['!cols'] = [{ wch: 22 }, { wch: 22 }, { wch: 20 }, { wch: 25 }];
+            XLSX.utils.book_append_sheet(wb, chartSheet, 'Chart Data');
+
+            // Save Excel file
+            XLSX.writeFile(wb, `cross_section_${selectedLocation.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
     </script>
 </body>
 </html>
